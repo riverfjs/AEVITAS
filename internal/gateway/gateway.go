@@ -12,12 +12,12 @@ import (
 
 	"github.com/cexll/agentsdk-go/pkg/api"
 	"github.com/cexll/agentsdk-go/pkg/model"
-	"github.com/chenwenjie/myclaw/internal/bus"
-	"github.com/chenwenjie/myclaw/internal/channel"
-	"github.com/chenwenjie/myclaw/internal/config"
-	"github.com/chenwenjie/myclaw/internal/cron"
-	"github.com/chenwenjie/myclaw/internal/heartbeat"
-	"github.com/chenwenjie/myclaw/internal/memory"
+	"github.com/stellarlinkco/myclaw/internal/bus"
+	"github.com/stellarlinkco/myclaw/internal/channel"
+	"github.com/stellarlinkco/myclaw/internal/config"
+	"github.com/stellarlinkco/myclaw/internal/cron"
+	"github.com/stellarlinkco/myclaw/internal/heartbeat"
+	"github.com/stellarlinkco/myclaw/internal/memory"
 )
 
 // Runtime interface for agent runtime (allows mocking in tests)

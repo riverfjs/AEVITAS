@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chenwenjie/myclaw/internal/bus"
-	"github.com/chenwenjie/myclaw/internal/config"
+	"github.com/stellarlinkco/myclaw/internal/bus"
+	"github.com/stellarlinkco/myclaw/internal/config"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 

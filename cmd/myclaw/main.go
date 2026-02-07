@@ -12,9 +12,9 @@ import (
 
 	"github.com/cexll/agentsdk-go/pkg/api"
 	"github.com/cexll/agentsdk-go/pkg/model"
-	"github.com/chenwenjie/myclaw/internal/config"
-	"github.com/chenwenjie/myclaw/internal/gateway"
-	"github.com/chenwenjie/myclaw/internal/memory"
+	"github.com/stellarlinkco/myclaw/internal/config"
+	"github.com/stellarlinkco/myclaw/internal/gateway"
+	"github.com/stellarlinkco/myclaw/internal/memory"
 	"github.com/spf13/cobra"
 )
 

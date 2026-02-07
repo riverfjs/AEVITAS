@@ -6,8 +6,8 @@ import (
 	"log"
 	"sync"
 
-	"github.com/chenwenjie/myclaw/internal/bus"
-	"github.com/chenwenjie/myclaw/internal/config"
+	"github.com/stellarlinkco/myclaw/internal/bus"
+	"github.com/stellarlinkco/myclaw/internal/config"
 )
 
 type ChannelManager struct {

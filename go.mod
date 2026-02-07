@@ -1,4 +1,4 @@
-module github.com/chenwenjie/myclaw
+module github.com/stellarlinkco/myclaw
 
 go 1.24.0
 

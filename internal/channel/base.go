@@ -3,7 +3,7 @@ package channel
 import (
 	"context"
 
-	"github.com/chenwenjie/myclaw/internal/bus"
+	"github.com/stellarlinkco/myclaw/internal/bus"
 )
 
 type Channel interface {

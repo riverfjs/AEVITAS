@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/cexll/agentsdk-go/pkg/api"
-	"github.com/chenwenjie/myclaw/internal/config"
-	"github.com/chenwenjie/myclaw/internal/memory"
+	"github.com/stellarlinkco/myclaw/internal/config"
+	"github.com/stellarlinkco/myclaw/internal/memory"
 	"github.com/spf13/cobra"
 )
 
