@@ -32,6 +32,13 @@ type AgentConfig struct {
 	MaxTokens         int     `json:"maxTokens"`
 	Temperature       float64 `json:"temperature"`
 	MaxToolIterations int     `json:"maxToolIterations"`
+	ErrorGuard        ErrorGuardConfig `json:"errorGuard,omitempty"`
+}
+
+type ErrorGuardConfig struct {
+	Enabled   *bool    `json:"enabled,omitempty"`   // nil = enabled (default), false = disabled
+	Threshold int      `json:"threshold,omitempty"` // Consecutive errors before intervention (default: 2)
+	Markers   []string `json:"markers,omitempty"`   // Custom error detection patterns
 }
 
 type ProviderConfig struct {

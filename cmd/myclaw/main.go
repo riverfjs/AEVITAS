@@ -11,11 +11,14 @@ import (
 	"strings"
 
 	"github.com/cexll/agentsdk-go/pkg/api"
+	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
 	"github.com/cexll/agentsdk-go/pkg/model"
 	"github.com/spf13/cobra"
 	"github.com/stellarlinkco/myclaw/internal/config"
 	"github.com/stellarlinkco/myclaw/internal/gateway"
+	"github.com/stellarlinkco/myclaw/internal/logger"
 	"github.com/stellarlinkco/myclaw/internal/memory"
+	"github.com/stellarlinkco/myclaw/pkg/utils"
 )
 
 // Runtime interface for agent runtime (allows mocking in tests)
@@ -46,6 +49,14 @@ func DefaultRuntimeFactory(cfg *config.Config) (Runtime, error) {
 		return nil, fmt.Errorf("API key not set. Run 'myclaw onboard' or set MYCLAW_API_KEY / ANTHROPIC_API_KEY")
 	}
 
+	// 初始化 logger
+	debug := os.Getenv("DEBUG") != ""
+	log, err := logger.InitLogger(cfg.Agent.Workspace, debug)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	defer log.Sync()
+
 	mem := memory.NewMemoryStore(cfg.Agent.Workspace)
 	sysPrompt := buildSystemPrompt(cfg, mem)
 
@@ -68,10 +79,17 @@ func DefaultRuntimeFactory(cfg *config.Config) (Runtime, error) {
 	}
 
 	rt, err := api.New(context.Background(), api.Options{
-		ProjectRoot:   cfg.Agent.Workspace,
-		ModelFactory:  provider,
-		SystemPrompt:  sysPrompt,
-		MaxIterations: cfg.Agent.MaxToolIterations,
+		ProjectRoot:         cfg.Agent.Workspace,
+		ModelFactory:        provider,
+		SystemPrompt:        sysPrompt,
+		MaxIterations:       cfg.Agent.MaxToolIterations,
+		Logger:              sdklogger.NewZapLogger(log),
+		ErrorGuardEnabled:   cfg.Agent.ErrorGuard.Enabled,
+		ErrorGuardThreshold: cfg.Agent.ErrorGuard.Threshold,
+		ErrorGuardMarkers:   cfg.Agent.ErrorGuard.Markers,
+		// CRITICAL: Security settings - DO NOT REMOVE
+		// These protect against dangerous commands like rm -rf
+		// The SDK's security.Validator blocks dangerous operations by default
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create runtime: %w", err)
@@ -106,7 +124,7 @@ var gatewayCmd = &cobra.Command{
 
 var onboardCmd = &cobra.Command{
 	Use:   "onboard",
-	Short: "Initialize config and workspace",
+	Short: "Initialize or reset workspace files (AGENTS.md, SOUL.md, .claude/settings.json)",
 	RunE:  runOnboard,
 }
 
@@ -116,11 +134,53 @@ var statusCmd = &cobra.Command{
 	RunE:  runStatus,
 }
 
+var skillsCmd = &cobra.Command{
+	Use:   "skills",
+	Short: "Manage skills (list, install, update, uninstall, verify)",
+}
+
+var skillsListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List installed skills",
+	RunE:  runSkillsList,
+}
+
+var skillsInstallCmd = &cobra.Command{
+	Use:   "install [skill-name]",
+	Short: "Install built-in skills (skip existing)",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runSkillsInstall,
+}
+
+var skillsUpdateCmd = &cobra.Command{
+	Use:   "update [skill-name]",
+	Short: "Update/reinstall skills (overwrite existing)",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runSkillsUpdate,
+}
+
+var skillsUninstallCmd = &cobra.Command{
+	Use:   "uninstall <skill-name>",
+	Short: "Uninstall a skill",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runSkillsUninstall,
+}
+
+var skillsVerifyCmd = &cobra.Command{
+	Use:   "verify",
+	Short: "Verify skills integrity",
+	RunE:  runSkillsVerify,
+}
+
+func init() {
+	skillsCmd.AddCommand(skillsListCmd, skillsInstallCmd, skillsUpdateCmd, skillsUninstallCmd, skillsVerifyCmd)
+}
+
 var messageFlag string
 
 func init() {
 	agentCmd.Flags().StringVarP(&messageFlag, "message", "m", "", "Single message to send")
-	rootCmd.AddCommand(agentCmd, gatewayCmd, onboardCmd, statusCmd)
+	rootCmd.AddCommand(agentCmd, gatewayCmd, onboardCmd, statusCmd, skillsCmd)
 }
 
 func main() {
@@ -257,11 +317,20 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	if err := os.MkdirAll(filepath.Join(ws, "memory"), 0755); err != nil {
 		return fmt.Errorf("create workspace: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(ws, ".claude"), 0755); err != nil {
+		return fmt.Errorf("create .claude dir: %w", err)
+	}
 
 	writeIfNotExists(filepath.Join(ws, "AGENTS.md"), defaultAgentsMD)
 	writeIfNotExists(filepath.Join(ws, "SOUL.md"), defaultSoulMD)
+	writeIfNotExists(filepath.Join(ws, ".claude", "settings.json"), defaultClaudeSettings)
 	writeIfNotExists(filepath.Join(ws, "memory", "MEMORY.md"), "")
 	writeIfNotExists(filepath.Join(ws, "HEARTBEAT.md"), "")
+	
+	// Copy built-in skills from embedded templates
+	if err := utils.CopyBuiltinSkills(ws); err != nil {
+		fmt.Printf("Warning: failed to copy skills: %v\n", err)
+	}
 
 	fmt.Printf("Workspace ready: %s\n", ws)
 	fmt.Println("\nNext steps:")
@@ -344,6 +413,7 @@ func writeIfNotExists(path, content string) {
 	}
 }
 
+
 const defaultAgentsMD = `# myclaw Agent
 
 You are myclaw, a personal AI assistant.
@@ -368,3 +438,116 @@ Your personality:
 - Technical when needed, simple when possible
 - Proactive about using tools to get real answers
 `
+
+const defaultClaudeSettings = `{
+  "permissions": {
+    "allow": [],
+    "deny": [],
+    "ask": []
+  },
+  "sandbox": {
+    "enabled": false,
+    "autoAllowBashIfSandboxed": false
+  }
+}
+`
+
+func runSkillsList(cmd *cobra.Command, args []string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	
+	skills, err := utils.ListInstalledSkills(cfg.Agent.Workspace)
+	if err != nil {
+		return err
+	}
+	
+	if len(skills) == 0 {
+		fmt.Println("No skills installed.")
+		return nil
+	}
+	
+	fmt.Println("Installed skills:")
+	for _, name := range skills {
+		fmt.Printf("  - %s\n", name)
+	}
+	
+	return nil
+}
+
+func runSkillsInstall(cmd *cobra.Command, args []string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	
+	if len(args) == 0 {
+		// Install all (skip existing)
+		return utils.CopyBuiltinSkills(cfg.Agent.Workspace)
+	}
+	
+	// Install specific skill
+	return utils.InstallSkill(cfg.Agent.Workspace, args[0])
+}
+
+func runSkillsUpdate(cmd *cobra.Command, args []string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	
+	if len(args) == 0 {
+		// Update all (overwrite existing)
+		return utils.UpdateBuiltinSkills(cfg.Agent.Workspace)
+	}
+	
+	// Update specific skill
+	return utils.UpdateSkill(cfg.Agent.Workspace, args[0])
+}
+
+func runSkillsUninstall(cmd *cobra.Command, args []string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	
+	return utils.UninstallSkill(cfg.Agent.Workspace, args[0])
+}
+
+func runSkillsVerify(cmd *cobra.Command, args []string) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	
+	results, err := utils.VerifyAllSkills(cfg.Agent.Workspace)
+	if err != nil {
+		return err
+	}
+	
+	if len(results) == 0 {
+		fmt.Println("No skills installed.")
+		return nil
+	}
+	
+	fmt.Println("Verifying skills...")
+	hasIssues := false
+	
+	for skillName, verifyErr := range results {
+		if verifyErr != nil {
+			fmt.Printf("  ✗ %s: %v\n", skillName, verifyErr)
+			hasIssues = true
+		} else {
+			fmt.Printf("  ✓ %s\n", skillName)
+		}
+	}
+	
+	if hasIssues {
+		fmt.Println("\nRun 'myclaw skills install' to fix issues.")
+		return fmt.Errorf("skill verification failed")
+	}
+	
+	fmt.Println("\nAll skills verified successfully.")
+	return nil
+}

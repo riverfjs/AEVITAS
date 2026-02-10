@@ -18,12 +18,34 @@ gateway: build
 	./$(BINARY) gateway
 
 ## Run onboard to initialize config and workspace
+## Initialize/reset workspace files
 onboard: build
 	./$(BINARY) onboard
 
 ## Show status
 status: build
 	./$(BINARY) status
+
+## List installed skills
+skills-list: build
+	./$(BINARY) skills list
+
+## Install or update all skills
+skills-install: build
+	./$(BINARY) skills install
+
+## Update/reinstall all skills (overwrite existing)
+skills-update: build
+	./$(BINARY) skills update
+
+## Uninstall a skill
+skills-uninstall: build
+	@test -n "$(SKILL)" || (echo "Usage: make skills-uninstall SKILL=<skill-name>" && exit 1)
+	./$(BINARY) skills uninstall $(SKILL)
+
+## Verify skills integrity
+skills-verify: build
+	./$(BINARY) skills verify
 
 ## Start cloudflared tunnel for Feishu webhook
 tunnel:

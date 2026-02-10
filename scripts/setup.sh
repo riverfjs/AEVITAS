@@ -134,9 +134,41 @@ chmod 600 "$CONFIG_FILE"
 
 echo ""
 echo "Config written to: $CONFIG_FILE"
+
+# Initialize workspace
+WORKSPACE_DIR="${HOME}/.myclaw/workspace"
+echo ""
+echo "Initializing workspace: $WORKSPACE_DIR"
+mkdir -p "${WORKSPACE_DIR}/memory"
+mkdir -p "${WORKSPACE_DIR}/.claude/skills"
+
+# Copy template files if they don't exist
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+[ ! -f "${WORKSPACE_DIR}/AGENTS.md" ] && cp "${PROJECT_ROOT}/workspace/AGENTS.md" "${WORKSPACE_DIR}/" 2>/dev/null || true
+[ ! -f "${WORKSPACE_DIR}/SOUL.md" ] && cp "${PROJECT_ROOT}/workspace/SOUL.md" "${WORKSPACE_DIR}/" 2>/dev/null || true
+[ ! -f "${WORKSPACE_DIR}/.claude/settings.json" ] && cp "${PROJECT_ROOT}/workspace/.claude/settings.json" "${WORKSPACE_DIR}/.claude/" 2>/dev/null || true
+[ ! -f "${WORKSPACE_DIR}/memory/MEMORY.md" ] && touch "${WORKSPACE_DIR}/memory/MEMORY.md"
+[ ! -f "${WORKSPACE_DIR}/HEARTBEAT.md" ] && touch "${WORKSPACE_DIR}/HEARTBEAT.md"
+
+# Copy skills if they don't exist
+if [ -d "${PROJECT_ROOT}/workspace/.claude/skills" ]; then
+    for skill in "${PROJECT_ROOT}/workspace/.claude/skills"/*; do
+        if [ -d "$skill" ]; then
+            skill_name=$(basename "$skill")
+            if [ ! -d "${WORKSPACE_DIR}/.claude/skills/${skill_name}" ]; then
+                cp -r "$skill" "${WORKSPACE_DIR}/.claude/skills/"
+                echo "Installed skill: ${skill_name}"
+            fi
+        fi
+    done
+fi
+
+echo "Workspace ready: $WORKSPACE_DIR"
+
 echo ""
 echo "Next steps:"
-echo "  make onboard    # Initialize workspace"
 echo "  make gateway    # Start gateway"
 if [ "$FEISHU_ENABLED" = "true" ]; then
     echo "  make tunnel     # Start cloudflared tunnel for Feishu webhook"

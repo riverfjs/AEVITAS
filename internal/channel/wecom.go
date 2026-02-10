@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
 	"github.com/stellarlinkco/myclaw/internal/bus"
 	"github.com/stellarlinkco/myclaw/internal/config"
 )
@@ -343,11 +343,11 @@ var defaultWeComClientFactory WeComClientFactory = func(cfg config.WeComConfig) 
 	return newDefaultWeComClient(cfg)
 }
 
-func NewWeComChannel(cfg config.WeComConfig, b *bus.MessageBus) (*WeComChannel, error) {
-	return NewWeComChannelWithFactory(cfg, b, defaultWeComClientFactory)
+func NewWeComChannel(cfg config.WeComConfig, b *bus.MessageBus, logger sdklogger.Logger) (*WeComChannel, error) {
+	return NewWeComChannelWithFactory(cfg, b, defaultWeComClientFactory, logger)
 }
 
-func NewWeComChannelWithFactory(cfg config.WeComConfig, b *bus.MessageBus, factory WeComClientFactory) (*WeComChannel, error) {
+func NewWeComChannelWithFactory(cfg config.WeComConfig, b *bus.MessageBus, factory WeComClientFactory, logger sdklogger.Logger) (*WeComChannel, error) {
 	if strings.TrimSpace(cfg.Token) == "" {
 		return nil, fmt.Errorf("wecom token is required")
 	}
@@ -362,7 +362,7 @@ func NewWeComChannelWithFactory(cfg config.WeComConfig, b *bus.MessageBus, facto
 	receiveID := strings.TrimSpace(cfg.ReceiveID)
 
 	ch := &WeComChannel{
-		BaseChannel:      NewBaseChannel(wecomChannelName, b, cfg.AllowFrom),
+		BaseChannel:      NewBaseChannel(wecomChannelName, b, cfg.AllowFrom, logger),
 		cfg:              cfg,
 		clientFactory:    factory,
 		allowlistEnabled: len(cfg.AllowFrom) > 0,
@@ -392,9 +392,9 @@ func (w *WeComChannel) Start(ctx context.Context) error {
 	}
 
 	go func() {
-		log.Printf("[wecom] callback server listening on :%d", port)
+		w.logger.Infof("[wecom] callback server listening on :%d", port)
 		if err := w.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("[wecom] server error: %v", err)
+			w.logger.Errorf("[wecom] server error: %v", err)
 		}
 	}()
 
@@ -416,7 +416,7 @@ func (w *WeComChannel) Stop() error {
 	if w.client != nil {
 		w.client.Close()
 	}
-	log.Printf("[wecom] stopped")
+	w.logger.Infof("[wecom] stopped")
 	return nil
 }
 
@@ -623,7 +623,7 @@ func (w *WeComChannel) buildEncryptedReply(timestamp, nonce, receiveID string, p
 func (w *WeComChannel) processDecryptedMessage(plaintext string) {
 	var message weComInboundMessage
 	if err := json.Unmarshal([]byte(plaintext), &message); err != nil {
-		log.Printf("[wecom] unmarshal plaintext json error: %v", err)
+		w.logger.Errorf("[wecom] unmarshal plaintext json error: %v", err)
 		return
 	}
 
@@ -633,13 +633,13 @@ func (w *WeComChannel) processDecryptedMessage(plaintext string) {
 	}
 
 	if !w.allowMessageFrom(senderID) {
-		log.Printf("[wecom] rejected message from %s", senderID)
+		w.logger.Warnf("[wecom] rejected message from %s", senderID)
 		return
 	}
 
 	messageID := strings.TrimSpace(message.MsgID)
 	if messageID != "" && w.msgCache.Seen(messageID) {
-		log.Printf("[wecom] duplicate message dropped: %s", messageID)
+		w.logger.Debugf("[wecom] duplicate message dropped: %s", messageID)
 		return
 	}
 
@@ -653,7 +653,7 @@ func (w *WeComChannel) processDecryptedMessage(plaintext string) {
 		w.replyCache.Set(chatID, responseURL)
 	}
 
-	content := extractWeComContent(message)
+	content := w.extractWeComContent(message)
 	if content == "" {
 		return
 	}
@@ -692,7 +692,7 @@ func (w *WeComChannel) resolveChatID(message weComInboundMessage, senderID strin
 	return senderID
 }
 
-func extractWeComContent(message weComInboundMessage) string {
+func (w *WeComChannel) extractWeComContent(message weComInboundMessage) string {
 	switch strings.ToLower(strings.TrimSpace(message.MsgType)) {
 	case "text":
 		return strings.TrimSpace(message.Text.Content)
@@ -710,7 +710,7 @@ func extractWeComContent(message weComInboundMessage) string {
 		}
 		return strings.TrimSpace(strings.Join(parts, "\n"))
 	default:
-		log.Printf("[wecom] unsupported message type: %s", strings.TrimSpace(message.MsgType))
+		w.logger.Debugf("[wecom] unsupported message type: %s", strings.TrimSpace(message.MsgType))
 		return ""
 	}
 }

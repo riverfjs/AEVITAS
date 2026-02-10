@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
 	"github.com/stellarlinkco/myclaw/internal/bus"
 	"github.com/stellarlinkco/myclaw/internal/config"
 )
@@ -148,17 +148,17 @@ type FeishuChannel struct {
 	clientFactory FeishuClientFactory
 }
 
-func NewFeishuChannel(cfg config.FeishuConfig, b *bus.MessageBus) (*FeishuChannel, error) {
-	return NewFeishuChannelWithFactory(cfg, b, defaultFeishuClientFactory)
+func NewFeishuChannel(cfg config.FeishuConfig, b *bus.MessageBus, logger sdklogger.Logger) (*FeishuChannel, error) {
+	return NewFeishuChannelWithFactory(cfg, b, defaultFeishuClientFactory, logger)
 }
 
-func NewFeishuChannelWithFactory(cfg config.FeishuConfig, b *bus.MessageBus, factory FeishuClientFactory) (*FeishuChannel, error) {
+func NewFeishuChannelWithFactory(cfg config.FeishuConfig, b *bus.MessageBus, factory FeishuClientFactory, logger sdklogger.Logger) (*FeishuChannel, error) {
 	if cfg.AppID == "" || cfg.AppSecret == "" {
 		return nil, fmt.Errorf("feishu app_id and app_secret are required")
 	}
 
 	ch := &FeishuChannel{
-		BaseChannel:   NewBaseChannel(feishuChannelName, b, cfg.AllowFrom),
+		BaseChannel:   NewBaseChannel(feishuChannelName, b, cfg.AllowFrom, logger),
 		cfg:           cfg,
 		clientFactory: factory,
 	}
@@ -184,9 +184,9 @@ func (f *FeishuChannel) Start(ctx context.Context) error {
 	}
 
 	go func() {
-		log.Printf("[feishu] webhook server listening on :%d", port)
+		f.logger.Infof("[feishu] webhook server listening on :%d", port)
 		if err := f.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("[feishu] server error: %v", err)
+			f.logger.Errorf("[feishu] server error: %v", err)
 		}
 	}()
 
@@ -205,7 +205,7 @@ func (f *FeishuChannel) Stop() error {
 	if f.server != nil {
 		f.server.Close()
 	}
-	log.Printf("[feishu] stopped")
+	f.logger.Infof("[feishu] stopped")
 	return nil
 }
 
@@ -276,7 +276,7 @@ func (f *FeishuChannel) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	senderID := event.Event.Sender.SenderID.OpenID
 	if !f.IsAllowed(senderID) {
-		log.Printf("[feishu] rejected message from %s", senderID)
+		f.logger.Warnf("[feishu] rejected message from %s", senderID)
 		return
 	}
 
@@ -288,7 +288,7 @@ func (f *FeishuChannel) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal([]byte(event.Event.Message.Content), &textContent); err != nil {
-		log.Printf("[feishu] parse content error: %v", err)
+		f.logger.Errorf("[feishu] parse content error: %v", err)
 		return
 	}
 

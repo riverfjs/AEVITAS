@@ -3,7 +3,6 @@ package gateway
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -11,18 +10,22 @@ import (
 	"syscall"
 
 	"github.com/cexll/agentsdk-go/pkg/api"
+	"github.com/cexll/agentsdk-go/pkg/core/events"
+	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
 	"github.com/cexll/agentsdk-go/pkg/model"
 	"github.com/stellarlinkco/myclaw/internal/bus"
 	"github.com/stellarlinkco/myclaw/internal/channel"
 	"github.com/stellarlinkco/myclaw/internal/config"
 	"github.com/stellarlinkco/myclaw/internal/cron"
 	"github.com/stellarlinkco/myclaw/internal/heartbeat"
+	"github.com/stellarlinkco/myclaw/internal/logger"
 	"github.com/stellarlinkco/myclaw/internal/memory"
 )
 
 // Runtime interface for agent runtime (allows mocking in tests)
 type Runtime interface {
 	Run(ctx context.Context, req api.Request) (*api.Response, error)
+	ClearSession(sessionID string) error
 	Close()
 }
 
@@ -33,6 +36,10 @@ type runtimeAdapter struct {
 
 func (r *runtimeAdapter) Run(ctx context.Context, req api.Request) (*api.Response, error) {
 	return r.rt.Run(ctx, req)
+}
+
+func (r *runtimeAdapter) ClearSession(sessionID string) error {
+	return r.rt.ClearSession(sessionID)
 }
 
 func (r *runtimeAdapter) Close() {
@@ -50,6 +57,14 @@ type Options struct {
 
 // DefaultRuntimeFactory creates the default agentsdk-go runtime
 func DefaultRuntimeFactory(cfg *config.Config, sysPrompt string) (Runtime, error) {
+	// 初始化 logger - 默认启用 debug 日志
+	debug := true // 始终启用详细日志
+	zapLogger, err := logger.InitLogger(cfg.Agent.Workspace, debug)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	sdkLog := sdklogger.NewZapLogger(zapLogger)
+
 	var provider api.ModelFactory
 	switch cfg.Provider.Type {
 	case "openai":
@@ -73,6 +88,7 @@ func DefaultRuntimeFactory(cfg *config.Config, sysPrompt string) (Runtime, error
 		ModelFactory:  provider,
 		SystemPrompt:  sysPrompt,
 		MaxIterations: cfg.Agent.MaxToolIterations,
+		Logger:        sdkLog,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create runtime: %w", err)
@@ -81,14 +97,17 @@ func DefaultRuntimeFactory(cfg *config.Config, sysPrompt string) (Runtime, error
 }
 
 type Gateway struct {
-	cfg        *config.Config
-	bus        *bus.MessageBus
-	runtime    Runtime
-	channels   *channel.ChannelManager
-	cron       *cron.Service
-	hb         *heartbeat.Service
-	mem        *memory.MemoryStore
-	signalChan chan os.Signal // for testing
+	cfg           *config.Config
+	bus           *bus.MessageBus
+	runtime       Runtime
+	runtimeFactory RuntimeFactory // Factory to recreate runtime on restart
+	channels      *channel.ChannelManager
+	cron          *cron.Service
+	hb            *heartbeat.Service
+	mem           *memory.MemoryStore
+	cmdHandler    *channel.CommandHandler
+	signalChan    chan os.Signal // for testing
+	logger        sdklogger.Logger
 }
 
 // New creates a Gateway with default options
@@ -98,7 +117,17 @@ func New(cfg *config.Config) (*Gateway, error) {
 
 // NewWithOptions creates a Gateway with custom options for testing
 func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
-	g := &Gateway{cfg: cfg}
+	// 初始化 logger
+	debug := true // 始终启用详细日志
+	zapLogger, err := logger.InitLogger(cfg.Agent.Workspace, debug)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	
+	g := &Gateway{
+		cfg:    cfg,
+		logger: sdklogger.NewZapLogger(zapLogger),
+	}
 
 	// Message bus
 	g.bus = bus.NewMessageBus(config.DefaultBufSize)
@@ -114,6 +143,7 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 	if factory == nil {
 		factory = DefaultRuntimeFactory
 	}
+	g.runtimeFactory = factory // Save factory for restart
 	rt, err := factory(cfg, sysPrompt)
 	if err != nil {
 		return nil, err
@@ -125,12 +155,22 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 
 	// runAgent helper for cron/heartbeat
 	runAgent := func(prompt string) (string, error) {
-		return g.runAgent(context.Background(), prompt, "system")
+		resp, err := g.runtime.Run(context.Background(), api.Request{
+			Prompt:    prompt,
+			SessionID: "system",
+		})
+		if err != nil {
+			return "", err
+		}
+		if resp == nil || resp.Result == nil {
+			return "", nil
+		}
+		return resp.Result.Output, nil
 	}
 
 	// Cron
 	cronStorePath := filepath.Join(config.ConfigDir(), "data", "cron", "jobs.json")
-	g.cron = cron.NewService(cronStorePath)
+	g.cron = cron.NewService(cronStorePath, g.logger)
 	g.cron.OnJob = func(job cron.CronJob) (string, error) {
 		result, err := runAgent(job.Payload.Message)
 		if err != nil {
@@ -147,10 +187,13 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 	}
 
 	// Heartbeat
-	g.hb = heartbeat.New(cfg.Agent.Workspace, runAgent, 0)
+	g.hb = heartbeat.New(cfg.Agent.Workspace, runAgent, 0, g.logger)
+
+	// Command handler
+	g.cmdHandler = channel.NewCommandHandler(g.runtime, cfg.Agent.Workspace)
 
 	// Channels
-	chMgr, err := channel.NewChannelManager(cfg.Channels, g.bus)
+	chMgr, err := channel.NewChannelManager(cfg.Channels, g.bus, g.logger)
 	if err != nil {
 		return nil, fmt.Errorf("create channel manager: %w", err)
 	}
@@ -179,44 +222,39 @@ func (g *Gateway) buildSystemPrompt() string {
 	return sb.String()
 }
 
-func (g *Gateway) runAgent(ctx context.Context, prompt, sessionID string) (string, error) {
-	resp, err := g.runtime.Run(ctx, api.Request{
-		Prompt:    prompt,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return "", err
+// start initializes and starts all gateway services
+func (g *Gateway) start(ctx context.Context) error {
+	go g.bus.DispatchOutbound(ctx)
+
+	if err := g.channels.StartAll(ctx); err != nil {
+		return fmt.Errorf("start channels: %w", err)
 	}
-	if resp == nil || resp.Result == nil {
-		return "", nil
+	g.logger.Infof("[gateway] channels started: %v", g.channels.EnabledChannels())
+
+	if err := g.cron.Start(ctx); err != nil {
+		g.logger.Warnf("[gateway] cron start warning: %v", err)
 	}
-	return resp.Result.Output, nil
+
+	go func() {
+		if err := g.hb.Start(ctx); err != nil {
+			g.logger.Errorf("[gateway] heartbeat error: %v", err)
+		}
+	}()
+
+	go g.processLoop(ctx)
+
+	g.logger.Infof("[gateway] running on %s:%d", g.cfg.Gateway.Host, g.cfg.Gateway.Port)
+	return nil
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	go g.bus.DispatchOutbound(ctx)
-
-	if err := g.channels.StartAll(ctx); err != nil {
-		return fmt.Errorf("start channels: %w", err)
+	// Initial start
+	if err := g.start(ctx); err != nil {
+		return err
 	}
-	log.Printf("[gateway] channels started: %v", g.channels.EnabledChannels())
-
-	if err := g.cron.Start(ctx); err != nil {
-		log.Printf("[gateway] cron start warning: %v", err)
-	}
-
-	go func() {
-		if err := g.hb.Start(ctx); err != nil {
-			log.Printf("[gateway] heartbeat error: %v", err)
-		}
-	}()
-
-	go g.processLoop(ctx)
-
-	log.Printf("[gateway] running on %s:%d", g.cfg.Gateway.Host, g.cfg.Gateway.Port)
 
 	// Use injected signal channel for testing, or create default
 	sigCh := g.signalChan
@@ -224,9 +262,10 @@ func (g *Gateway) Run(ctx context.Context) error {
 		sigCh = make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	}
-	<-sigCh
-
-	log.Printf("[gateway] shutting down...")
+	sig := <-sigCh
+	g.logger.Infof("[gateway] shutdown signal received: %v", sig)
+	cancel() // Cancel context to stop all goroutines
+	g.logger.Infof("[gateway] shutting down...")
 	return g.Shutdown()
 }
 
@@ -234,25 +273,142 @@ func (g *Gateway) processLoop(ctx context.Context) {
 	for {
 		select {
 		case msg := <-g.bus.Inbound:
-			log.Printf("[gateway] inbound from %s/%s: %s", msg.Channel, msg.SenderID, truncate(msg.Content, 80))
+			g.logger.Infof("[gateway] inbound from %s/%s: %s", msg.Channel, msg.SenderID, truncate(msg.Content, 80))
 
-			result, err := g.runAgent(ctx, msg.Content, msg.SessionKey())
-			if err != nil {
-				log.Printf("[gateway] agent error: %v", err)
-				result = "Sorry, I encountered an error processing your message."
-			}
-
-			if result != "" {
-				g.bus.Outbound <- bus.OutboundMessage{
-					Channel: msg.Channel,
-					ChatID:  msg.ChatID,
-					Content: result,
+			// Check if this is a special command
+			cmdResult := g.cmdHandler.HandleCommand(msg)
+			if cmdResult.Handled {
+				g.logger.Infof("[gateway] command handled: %s", truncate(msg.Content, 40))
+				if cmdResult.Response != "" {
+					g.bus.Outbound <- bus.OutboundMessage{
+						Channel: msg.Channel,
+						ChatID:  msg.ChatID,
+						Content: cmdResult.Response,
+					}
 				}
+				continue
 			}
+
+			// 异步处理 agent
+			go g.processAgent(ctx, msg)
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
+	resp, err := g.runtime.Run(ctx, api.Request{
+		Prompt:    msg.Content,
+		SessionID: msg.SessionKey(),
+	})
+	
+	if err != nil {
+		g.logger.Errorf("[gateway] agent error: %v", err)
+		
+		// Provide user-friendly error messages
+		var errorMsg string
+		if strings.Contains(err.Error(), "max iterations reached") {
+			errorMsg = "抱歉，这个任务太复杂了，我尝试了太多次工具调用。请简化您的请求或分步骤提问。"
+		} else if strings.Contains(err.Error(), "context deadline exceeded") {
+			errorMsg = "抱歉，处理超时了。请稍后再试或简化您的请求。"
+		} else {
+			errorMsg = "抱歉，处理您的消息时遇到了错误。"
+		}
+		
+		g.bus.Outbound <- bus.OutboundMessage{
+			Channel: msg.Channel,
+			ChatID:  msg.ChatID,
+			Content: errorMsg,
+		}
+		return
+	}
+	
+	// 构建响应内容（优先级：Commands > Skills > AskUserQuestion > Subagent > Result.Output）
+	var content strings.Builder
+	
+	// 1. Command results（如 /help）
+	for _, cmdRes := range resp.CommandResults {
+		if output, ok := cmdRes.Result.Output.(string); ok && output != "" {
+			content.WriteString(output)
+			content.WriteString("\n\n")
+		}
+	}
+	
+	// 2. Skill results
+	for _, skillRes := range resp.SkillResults {
+		if output, ok := skillRes.Result.Output.(string); ok && output != "" {
+			content.WriteString(output)
+			content.WriteString("\n\n")
+		}
+	}
+	
+	// 3. AskUserQuestion（通过 HookEvents）
+	if question := g.extractAskUserQuestion(resp); question != "" {
+		g.logger.Infof("[gateway] AskUserQuestion: %s", truncate(question, 60))
+		g.bus.Outbound <- bus.OutboundMessage{
+			Channel: msg.Channel,
+			ChatID:  msg.ChatID,
+			Content: question,
+		}
+		return
+	}
+	
+	// 4. Subagent result
+	if resp.Subagent != nil {
+		if output, ok := resp.Subagent.Output.(string); ok && output != "" {
+			content.WriteString(output)
+			content.WriteString("\n\n")
+		}
+	}
+	
+	// 5. Main agent output
+	if resp.Result != nil && resp.Result.Output != "" {
+		content.WriteString(resp.Result.Output)
+	}
+	
+	result := strings.TrimSpace(content.String())
+	if result != "" {
+		g.logger.Infof("[gateway] outbound to %s/%s: %s", msg.Channel, msg.ChatID, truncate(result, 80))
+		g.bus.Outbound <- bus.OutboundMessage{
+			Channel: msg.Channel,
+			ChatID:  msg.ChatID,
+			Content: result,
+		}
+	} else {
+		g.logger.Warnf("[gateway] no response generated for %s/%s", msg.Channel, msg.SenderID)
+	}
+}
+
+// extractAskUserQuestion extracts formatted question from AskUserQuestion tool execution
+func (g *Gateway) extractAskUserQuestion(resp *api.Response) string {
+	if resp == nil {
+		return ""
+	}
+	
+	for _, event := range resp.HookEvents {
+		if event.Type != events.PostToolUse {
+			continue
+		}
+		
+		payload, ok := event.Payload.(events.ToolResultPayload)
+		if !ok {
+			continue
+		}
+		
+		g.logger.Debugf("[gateway] PostToolUse tool: %s", payload.Name)
+		
+		if payload.Name != "AskUserQuestion" && payload.Name != "ask_user_question" {
+			continue
+		}
+		
+		// payload.Result is the formatted question string
+		if output, ok := payload.Result.(string); ok && output != "" {
+			return output
+		}
+	}
+	
+	return ""
 }
 
 func (g *Gateway) Shutdown() error {
@@ -261,7 +417,7 @@ func (g *Gateway) Shutdown() error {
 	if g.runtime != nil {
 		g.runtime.Close()
 	}
-	log.Printf("[gateway] shutdown complete")
+	g.logger.Infof("[gateway] shutdown complete")
 	return nil
 }
 

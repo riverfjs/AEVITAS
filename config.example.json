@@ -4,17 +4,27 @@
     "model": "claude-sonnet-4-5-20250929",
     "maxTokens": 8192,
     "temperature": 0.7,
-    "maxToolIterations": 20
+    "maxToolIterations": 20,
+    "errorGuard": {
+      "enabled": true,
+      "threshold": 2,
+      "markers": []
+    }
   },
   "provider": {
     "type": "anthropic",
-    "apiKey": "sk-ant-...",
+    "apiKey": "${ANTHROPIC_API_KEY}",
     "baseUrl": ""
+  },
+  "tools": {
+    "braveApiKey": "${BRAVE_API_KEY}",
+    "execTimeout": 60,
+    "restrictToWorkspace": true
   },
   "channels": {
     "telegram": {
       "enabled": false,
-      "token": "",
+      "token": "${TELEGRAM_BOT_TOKEN}",
       "allowFrom": [],
       "proxy": ""
     },
@@ -24,7 +34,7 @@
       "appSecret": "",
       "verificationToken": "",
       "encryptKey": "",
-      "port": 9876,
+      "port": 8080,
       "allowFrom": []
     },
     "wecom": {
@@ -32,14 +42,9 @@
       "token": "",
       "encodingAESKey": "",
       "receiveId": "",
-      "port": 9886,
+      "port": 8081,
       "allowFrom": []
     }
-  },
-  "tools": {
-    "braveApiKey": "",
-    "execTimeout": 60,
-    "restrictToWorkspace": true
   },
   "gateway": {
     "host": "0.0.0.0",

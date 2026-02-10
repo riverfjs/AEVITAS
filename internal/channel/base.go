@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 
+	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
 	"github.com/stellarlinkco/myclaw/internal/bus"
 )
 
@@ -17,14 +18,15 @@ type BaseChannel struct {
 	name      string
 	bus       *bus.MessageBus
 	allowFrom map[string]bool
+	logger    sdklogger.Logger
 }
 
-func NewBaseChannel(name string, b *bus.MessageBus, allowFrom []string) BaseChannel {
+func NewBaseChannel(name string, b *bus.MessageBus, allowFrom []string, logger sdklogger.Logger) BaseChannel {
 	af := make(map[string]bool, len(allowFrom))
 	for _, id := range allowFrom {
 		af[id] = true
 	}
-	return BaseChannel{name: name, bus: b, allowFrom: af}
+	return BaseChannel{name: name, bus: b, allowFrom: af, logger: logger}
 }
 
 func (c *BaseChannel) Name() string {

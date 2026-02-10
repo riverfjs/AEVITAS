@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
 	rcron "github.com/robfig/cron/v3"
 )
 
@@ -20,18 +20,20 @@ type Service struct {
 	OnJob     func(job CronJob) (string, error)
 	cron      *rcron.Cron
 	entryMap  map[string]rcron.EntryID // job ID -> cron entry ID
+	logger    sdklogger.Logger
 }
 
-func NewService(storePath string) *Service {
+func NewService(storePath string, logger sdklogger.Logger) *Service {
 	return &Service{
 		storePath: storePath,
 		entryMap:  make(map[string]rcron.EntryID),
+		logger:    logger,
 	}
 }
 
 func (s *Service) Start(ctx context.Context) error {
 	if err := s.load(); err != nil {
-		log.Printf("[cron] warning: failed to load jobs: %v", err)
+		s.logger.Warnf("[cron] warning: failed to load jobs: %v", err)
 	}
 
 	s.cron = rcron.New(rcron.WithSeconds())
@@ -45,7 +47,7 @@ func (s *Service) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.cron.Start()
-	log.Printf("[cron] started with %d jobs", len(s.jobs))
+	s.logger.Infof("[cron] started with %d jobs", len(s.jobs))
 
 	// Handle "every" and "at" jobs in a separate goroutine
 	go s.tickLoop(ctx)
@@ -64,17 +66,17 @@ func (s *Service) registerJob(job *CronJob) {
 		s.executeJob(jobCopy)
 	})
 	if err != nil {
-		log.Printf("[cron] failed to register job %s (%s): %v", job.Name, job.Schedule.Expr, err)
+		s.logger.Errorf("[cron] failed to register job %s (%s): %v", job.Name, job.Schedule.Expr, err)
 		return
 	}
 	s.entryMap[job.ID] = id
 }
 
 func (s *Service) executeJob(job CronJob) {
-	log.Printf("[cron] executing job %s (%s)", job.Name, job.ID)
+	s.logger.Infof("[cron] executing job %s (%s)", job.Name, job.ID)
 
 	if s.OnJob == nil {
-		log.Printf("[cron] no OnJob handler set")
+		s.logger.Warnf("[cron] no OnJob handler set")
 		return
 	}
 
@@ -89,11 +91,11 @@ func (s *Service) executeJob(job CronJob) {
 			if err != nil {
 				s.jobs[i].State.LastStatus = "error"
 				s.jobs[i].State.LastError = err.Error()
-				log.Printf("[cron] job %s error: %v", job.Name, err)
+				s.logger.Errorf("[cron] job %s error: %v", job.Name, err)
 			} else {
 				s.jobs[i].State.LastStatus = "ok"
 				s.jobs[i].State.LastError = ""
-				log.Printf("[cron] job %s result: %s", job.Name, truncate(result, 100))
+				s.logger.Infof("[cron] job %s result: %s", job.Name, truncate(result, 100))
 			}
 
 			if s.jobs[i].DeleteAfterRun {
@@ -152,7 +154,7 @@ func (s *Service) Stop() {
 	if s.cron != nil {
 		s.cron.Stop()
 	}
-	log.Printf("[cron] stopped")
+	s.logger.Infof("[cron] stopped")
 }
 
 func (s *Service) AddJob(name string, schedule Schedule, payload Payload) (*CronJob, error) {

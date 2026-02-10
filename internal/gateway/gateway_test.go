@@ -2,8 +2,10 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,10 +23,17 @@ type mockRuntime struct {
 	response *api.Response
 	err      error
 	closed   bool
+	clearSessionCalled bool
+	clearSessionError  error
 }
 
 func (m *mockRuntime) Run(ctx context.Context, req api.Request) (*api.Response, error) {
 	return m.response, m.err
+}
+
+func (m *mockRuntime) ClearSession(sessionID string) error {
+	m.clearSessionCalled = true
+	return m.clearSessionError
 }
 
 func (m *mockRuntime) Close() {
@@ -794,4 +803,121 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestGateway_ResetSession_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			Workspace: tmpDir,
+		},
+		Channels: config.ChannelsConfig{},
+	}
+	
+	mockRt := &mockRuntime{
+		response: &api.Response{
+			Result: &api.Result{Output: "test"},
+		},
+	}
+	
+	g, err := NewWithOptions(cfg, Options{
+		RuntimeFactory: mockRuntimeFactory(mockRt),
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions error: %v", err)
+	}
+	defer g.Shutdown()
+	
+	sessionKey := "telegram-123"
+	
+	// Reset session
+	if err := g.resetSession(sessionKey); err != nil {
+		t.Fatalf("resetSession error: %v", err)
+	}
+	
+	// Verify SDK ClearSession was called
+	if !mockRt.clearSessionCalled {
+		t.Error("Expected ClearSession to be called on runtime")
+	}
+}
+
+func TestGateway_ResetSession_SDKError(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			Workspace: tmpDir,
+		},
+		Channels: config.ChannelsConfig{},
+	}
+	
+	expectedErr := errors.New("SDK error")
+	mockRt := &mockRuntime{
+		response: &api.Response{
+			Result: &api.Result{Output: "test"},
+		},
+		clearSessionError: expectedErr,
+	}
+	
+	g, err := NewWithOptions(cfg, Options{
+		RuntimeFactory: mockRuntimeFactory(mockRt),
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions error: %v", err)
+	}
+	defer g.Shutdown()
+	
+	// Reset session should propagate SDK error
+	if err := g.resetSession("test-session"); err == nil {
+		t.Error("Expected error from resetSession")
+	} else if !strings.Contains(err.Error(), "failed to clear session") {
+		t.Errorf("Expected 'failed to clear session' error, got: %v", err)
+	}
+}
+
+func TestGateway_CommandHandler_Integration(t *testing.T) {
+	tmpDir := t.TempDir()
+	
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			Workspace: tmpDir,
+		},
+		Channels: config.ChannelsConfig{},
+	}
+	
+	mockRt := &mockRuntime{
+		response: &api.Response{
+			Result: &api.Result{Output: "agent response"},
+		},
+	}
+	
+	g, err := NewWithOptions(cfg, Options{
+		RuntimeFactory: mockRuntimeFactory(mockRt),
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions error: %v", err)
+	}
+	defer g.Shutdown()
+	
+	// Test that cmdHandler is initialized
+	if g.cmdHandler == nil {
+		t.Fatal("Expected cmdHandler to be initialized")
+	}
+	
+	// Test /start command
+	startMsg := bus.InboundMessage{
+		Channel:  "test",
+		ChatID:   "123",
+		SenderID: "user1",
+		Content:  "/start",
+	}
+	
+	result := g.cmdHandler.HandleCommand(startMsg)
+	if !result.Handled {
+		t.Error("Expected /start to be handled")
+	}
+	if !contains(result.Response, "Aevitas") {
+		t.Errorf("Expected Aevitas in response, got: %s", result.Response)
+	}
 }
