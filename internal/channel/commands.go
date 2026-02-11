@@ -95,43 +95,31 @@ func (h *CommandHandler) handleStart() string {
 
 Advanced Evolutionary Virtual Intelligence with Temporal Awareness System online and operational.
 
-**My Capabilities:**
-
-**Core Tools:**
-• File Operations: Read, Write, Edit files
-• Web: Search (Brave API), Fetch web pages
-• Code: Execute commands, Search text, Find files
-• Interaction: Ask questions during execution
-
-**Skills:**
-I have multiple skills installed. Use /skill list to see all available skills, or just ask me what I can do!
-
-**Available Commands:**
-• /help - Show all commands
-• /skill list - List all installed skills
-• /reset - Clear conversation history
-
-Just send me a message to get started!`
+Type /help to see what I can do.`
 }
 
 func (h *CommandHandler) handleHelp() string {
-	return `📚 **Available Commands**
+	return `📚 **Aevitas Capabilities**
 
-/start - Introduction and welcome message
-/help - Show this help message
-/skill list - List all installed skills
-/reset - Clear conversation history and start fresh
+**Core Tools:**
+• File Operations: Read, Write, Edit files
+• Web: Search (Brave API), Fetch web pages  
+• Code: Execute commands, Search text, Find files
+• Vision: Analyze images (multimodal support)
 
-**What I can do:**
-• Execute shell commands (with security validation)
-• Read and write files
-• Search the web for information
-• Remember important information across conversations
-• Analyze code and provide suggestions
-• Manage your workspace files
-• Use multiple installed skills (use /skill list to see them)
+**Skills:**
+Use /skill list to see installed skills
 
-Just send me a message to get started!`
+**Commands:**
+• /start - Welcome message
+• /help - Show this help  
+• /skill list - List installed skills
+• /reset - Clear conversation history
+
+**Multimodal:**
+Send images with text - I can analyze photos, diagrams, screenshots, etc.
+
+Just send a message or image to get started!`
 }
 
 func (h *CommandHandler) handleReset(sessionKey string) string {
