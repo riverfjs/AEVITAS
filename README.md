@@ -150,7 +150,13 @@ Run `make setup` for interactive config, or copy `config.example.json` to `~/.my
     "baseUrl": ""
   },
   "agent": {
-    "model": "claude-sonnet-4-5-20250929"
+    "model": "claude-sonnet-4-5-20250929",
+    "maxToolIterations": 100,
+    "errorGuard": {
+      "enabled": true,
+      "threshold": 2,
+      "markers": []
+    }
   },
   "channels": {
     "telegram": {

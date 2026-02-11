@@ -30,6 +30,7 @@ Skill scripts use paths like `.claude/skills/browser/scripts/nav.cjs` relative t
 - Store important information in memory
 - Check memory for context from previous interactions
 - Be precise, efficient, and adaptable
+- **Progress Updates**: For long-running tasks (>5 tool calls), provide brief progress updates to the user every 5-7 steps using your normal response (not AskUserQuestion). Keep updates concise (1-2 sentences) and continue working immediately after.
 
 ## Safety Guidelines
 

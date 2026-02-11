@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 
@@ -324,6 +325,9 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 		return
 	}
 	
+	// Extract screenshot paths from tool results
+	screenshotPaths := g.extractScreenshotPaths(resp)
+	
 	// 构建响应内容（优先级：Commands > Skills > AskUserQuestion > Subagent > Result.Output）
 	var content strings.Builder
 	
@@ -365,6 +369,14 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 	// 5. Main agent output
 	if resp.Result != nil && resp.Result.Output != "" {
 		content.WriteString(resp.Result.Output)
+	}
+	
+	// 6. Append screenshot paths if any
+	if len(screenshotPaths) > 0 {
+		for _, path := range screenshotPaths {
+			content.WriteString("\n")
+			content.WriteString(path)
+		}
 	}
 	
 	result := strings.TrimSpace(content.String())
@@ -418,6 +430,55 @@ func (g *Gateway) extractAskUserQuestion(resp *api.Response) string {
 	}
 	
 	return askUserResult
+}
+
+// extractScreenshotPaths extracts screenshot file paths from tool execution results
+func (g *Gateway) extractScreenshotPaths(resp *api.Response) []string {
+	if resp == nil {
+		return nil
+	}
+	
+	var paths []string
+	
+	for _, event := range resp.HookEvents {
+		if event.Type != events.PostToolUse {
+			continue
+		}
+		
+		payload, ok := event.Payload.(events.ToolResultPayload)
+		if !ok {
+			continue
+		}
+		
+		// Check if it's a Bash tool call
+		if payload.Name != "Bash" {
+			continue
+		}
+		
+		// Try to parse Result as a map
+		if resultMap, ok := payload.Result.(map[string]interface{}); ok {
+			// Check if it contains a "path" field with screenshot
+			if pathStr, ok := resultMap["path"].(string); ok {
+				if strings.Contains(pathStr, "screenshot-") && strings.HasSuffix(pathStr, ".png") {
+					paths = append(paths, pathStr)
+					g.logger.Debugf("[gateway] Found screenshot: %s", pathStr)
+				}
+			}
+		}
+		
+		// Also try string result (in case it's JSON string)
+		if resultStr, ok := payload.Result.(string); ok {
+			// Simple regex to extract screenshot paths
+			re := regexp.MustCompile(`(/[^\s"]+/screenshot-[0-9]+\.png)`)
+			matches := re.FindAllString(resultStr, -1)
+			for _, match := range matches {
+				paths = append(paths, match)
+				g.logger.Debugf("[gateway] Found screenshot: %s", match)
+			}
+		}
+	}
+	
+	return paths
 }
 
 func (g *Gateway) Shutdown() error {
