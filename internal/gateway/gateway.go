@@ -299,9 +299,26 @@ func (g *Gateway) processLoop(ctx context.Context) {
 }
 
 func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
+	// Build attachments from media
+	var attachments []api.Attachment
+	for _, mediaPath := range msg.Media {
+		// Detect mime type from file extension
+		mimeType := detectMimeType(mediaPath)
+		attachments = append(attachments, api.Attachment{
+			Type:     "image",
+			FilePath: mediaPath,
+			MimeType: mimeType,
+		})
+	}
+	
+	if len(attachments) > 0 {
+		g.logger.Infof("[gateway] processing %d image(s)", len(attachments))
+	}
+
 	resp, err := g.runtime.Run(ctx, api.Request{
-		Prompt:    msg.Content,
-		SessionID: msg.SessionKey(),
+		Prompt:      msg.Content,
+		SessionID:   msg.SessionKey(),
+		Attachments: attachments,
 	})
 	
 	if err != nil {
@@ -497,4 +514,22 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
+
+// detectMimeType detects MIME type from file extension
+func detectMimeType(filePath string) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	default:
+		return "image/jpeg" // default
+	}
+}
+
 

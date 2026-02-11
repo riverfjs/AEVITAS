@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -28,6 +30,7 @@ type TelegramBot interface {
 	StopReceivingUpdates()
 	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
 	GetSelf() tgbotapi.User
+	GetFileDirectURL(fileID string) (string, error)
 }
 
 // tgBotWrapper wraps tgbotapi.BotAPI to implement TelegramBot interface
@@ -49,6 +52,10 @@ func (w *tgBotWrapper) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 
 func (w *tgBotWrapper) GetSelf() tgbotapi.User {
 	return w.bot.Self
+}
+
+func (w *tgBotWrapper) GetFileDirectURL(fileID string) (string, error) {
+	return w.bot.GetFileDirectURL(fileID)
 }
 
 // BotFactory creates TelegramBot instances (allows mocking)
@@ -155,7 +162,27 @@ func (t *TelegramChannel) handleMessage(msg *tgbotapi.Message) {
 	if content == "" && msg.Caption != "" {
 		content = msg.Caption
 	}
-	if content == "" {
+
+	// Download photos if present
+	var media []string
+	if msg.Photo != nil && len(msg.Photo) > 0 {
+		// Get largest photo
+		photo := msg.Photo[len(msg.Photo)-1]
+		localPath, err := t.downloadFile(photo.FileID, "photo")
+		if err != nil {
+			t.logger.Warnf("failed to download photo: %v", err)
+		} else {
+			media = append(media, localPath)
+			t.logger.Debugf("downloaded photo to %s", localPath)
+		}
+		// If no text, provide default prompt
+		if content == "" {
+			content = "请分析这张图片"
+		}
+	}
+
+	// Skip messages with no content and no media
+	if content == "" && len(media) == 0 {
 		return
 	}
 
@@ -170,6 +197,7 @@ func (t *TelegramChannel) handleMessage(msg *tgbotapi.Message) {
 		SenderID:  senderID,
 		ChatID:    chatID,
 		Content:   content,
+		Media:     media,
 		Timestamp: time.Unix(int64(msg.Date), 0),
 		Metadata: map[string]any{
 			"username":   msg.From.UserName,
@@ -187,6 +215,44 @@ func (t *TelegramChannel) Stop() error {
 		t.bot.StopReceivingUpdates()
 	}
 	return nil
+}
+
+// downloadFile downloads a Telegram file to local temp directory
+func (t *TelegramChannel) downloadFile(fileID, prefix string) (string, error) {
+	fileURL, err := t.bot.GetFileDirectURL(fileID)
+	if err != nil {
+		return "", fmt.Errorf("get file url: %w", err)
+	}
+
+	// Create temp directory
+	tempDir := filepath.Join(os.TempDir(), "myclaw-telegram-media")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return "", fmt.Errorf("create temp dir: %w", err)
+	}
+
+	// Download file
+	resp, err := http.Get(fileURL)
+	if err != nil {
+		return "", fmt.Errorf("download file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Generate unique filename
+	filename := fmt.Sprintf("%s-%d-%s", prefix, time.Now().Unix(), filepath.Base(fileURL))
+	localPath := filepath.Join(tempDir, filename)
+
+	// Save to disk
+	outFile, err := os.Create(localPath)
+	if err != nil {
+		return "", fmt.Errorf("create local file: %w", err)
+	}
+	defer outFile.Close()
+
+	if _, err := io.Copy(outFile, resp.Body); err != nil {
+		return "", fmt.Errorf("save file: %w", err)
+	}
+
+	return localPath, nil
 }
 
 // SetBot sets the bot (for testing)
