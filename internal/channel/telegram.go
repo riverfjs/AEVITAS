@@ -329,52 +329,151 @@ func (t *TelegramChannel) sendPhoto(chatID int64, imagePath string) error {
 	return nil
 }
 
-// sendNewMessage sends a new message (potentially split into multiple parts)
-// Uses Telegram MessageEntity format instead of HTML/Markdown parse modes
+// sendNewMessage sends a new message using full Telegramify pipeline
+// Supports text, code files, and Mermaid diagram images
 func (t *TelegramChannel) sendNewMessage(chatID int64, content string) error {
-	// Convert Markdown to plain text + entities using telegramify
-	text, entities := telegramify.Convert(content, false, nil)
+	ctx := context.Background()
 	
-	// Split into chunks if needed (Telegram limit is 4096 UTF-16 code units)
-	const maxUTF16Len = 4090 // Leave some margin
-	chunks := telegramify.SplitEntities(text, entities, maxUTF16Len)
+	// Process markdown with full pipeline (split, code extraction, mermaid rendering)
+	const maxUTF16Len = 4090 // Leave some margin (Telegram limit is 4096)
+	contents, err := telegramify.Telegramify(ctx, content, maxUTF16Len, false, nil)
+	if err != nil {
+		return fmt.Errorf("telegramify process: %w", err)
+	}
 	
-	// Send each chunk
-	for _, chunk := range chunks {
-		tgMsg := tgbotapi.NewMessage(chatID, chunk.Text)
-		
-		// Convert our MessageEntity to Telegram's format
-		if len(chunk.Entities) > 0 {
-			tgEntities := make([]tgbotapi.MessageEntity, 0, len(chunk.Entities))
-			for _, ent := range chunk.Entities {
-				tgEnt := tgbotapi.MessageEntity{
-					Type:   ent.Type,
-					Offset: ent.Offset,
-					Length: ent.Length,
-				}
-				if ent.URL != "" {
-					tgEnt.URL = ent.URL
-				}
-				if ent.Language != "" {
-					tgEnt.Language = ent.Language
-				}
-				// Note: CustomEmojiID not supported by tgbotapi v5
-				tgEntities = append(tgEntities, tgEnt)
+	// Send each content piece in order
+	for _, item := range contents {
+		switch c := item.(type) {
+		case *telegramify.Text:
+			if err := t.sendTextContent(chatID, c); err != nil {
+				return err
 			}
-			tgMsg.Entities = tgEntities
-		}
-		
-		// Send the message (do NOT set ParseMode - entities are used directly)
-		if _, err := t.bot.Send(tgMsg); err != nil {
-			// Fallback to plain text if entity parsing fails
-			t.logger.Warnf("[telegram] Failed to send with entities, falling back to plain text: %v", err)
-			fallbackMsg := tgbotapi.NewMessage(chatID, text) // Use original full text as fallback
-			if _, err2 := t.bot.Send(fallbackMsg); err2 != nil {
-				return fmt.Errorf("send telegram message: %w", err2)
+		case *telegramify.File:
+			if err := t.sendFileContent(chatID, c); err != nil {
+				return err
 			}
-			return nil
+		case *telegramify.Photo:
+			if err := t.sendPhotoContent(chatID, c); err != nil {
+				return err
+			}
+		default:
+			t.logger.Warnf("[telegram] unknown content type: %T", item)
 		}
 	}
+	
+	return nil
+}
+
+// sendTextContent sends a text message with entities
+func (t *TelegramChannel) sendTextContent(chatID int64, text *telegramify.Text) error {
+	tgMsg := tgbotapi.NewMessage(chatID, text.Text)
+	
+	// Convert MessageEntity to Telegram's format
+	if len(text.Entities) > 0 {
+		tgEntities := make([]tgbotapi.MessageEntity, 0, len(text.Entities))
+		for _, ent := range text.Entities {
+			tgEnt := tgbotapi.MessageEntity{
+				Type:   ent.Type,
+				Offset: ent.Offset,
+				Length: ent.Length,
+			}
+			if ent.URL != "" {
+				tgEnt.URL = ent.URL
+			}
+			if ent.Language != "" {
+				tgEnt.Language = ent.Language
+			}
+			tgEntities = append(tgEntities, tgEnt)
+		}
+		tgMsg.Entities = tgEntities
+	}
+	
+	// Send the message
+	if _, err := t.bot.Send(tgMsg); err != nil {
+		// Fallback to plain text if entity parsing fails
+		t.logger.Warnf("[telegram] failed to send with entities, falling back to plain text: %v", err)
+		fallbackMsg := tgbotapi.NewMessage(chatID, text.Text)
+		if _, err2 := t.bot.Send(fallbackMsg); err2 != nil {
+			return fmt.Errorf("send telegram message: %w", err2)
+		}
+	}
+	
+	return nil
+}
+
+// sendFileContent sends a file (e.g., code block)
+func (t *TelegramChannel) sendFileContent(chatID int64, file *telegramify.File) error {
+	// Create FileBytes from data
+	fileBytes := tgbotapi.FileBytes{
+		Name:  file.FileName,
+		Bytes: file.FileData,
+	}
+	
+	doc := tgbotapi.NewDocument(chatID, fileBytes)
+	
+	// Add caption if present
+	if file.CaptionText != "" {
+		doc.Caption = file.CaptionText
+		
+		// Add caption entities
+		if len(file.CaptionEntities) > 0 {
+			tgEntities := make([]tgbotapi.MessageEntity, 0, len(file.CaptionEntities))
+			for _, ent := range file.CaptionEntities {
+				tgEntities = append(tgEntities, tgbotapi.MessageEntity{
+					Type:     ent.Type,
+					Offset:   ent.Offset,
+					Length:   ent.Length,
+					URL:      ent.URL,
+					Language: ent.Language,
+				})
+			}
+			doc.CaptionEntities = tgEntities
+		}
+	}
+	
+	if _, err := t.bot.Send(doc); err != nil {
+		return fmt.Errorf("send file: %w", err)
+	}
+	
+	t.logger.Debugf("[telegram] sent file: %s", file.FileName)
+	return nil
+}
+
+// sendPhotoContent sends a photo (e.g., Mermaid diagram)
+func (t *TelegramChannel) sendPhotoContent(chatID int64, photo *telegramify.Photo) error {
+	// Create FileBytes from image data
+	fileBytes := tgbotapi.FileBytes{
+		Name:  photo.FileName,
+		Bytes: photo.FileData,
+	}
+	
+	photoMsg := tgbotapi.NewPhoto(chatID, fileBytes)
+	
+	// Add caption if present
+	if photo.CaptionText != "" {
+		photoMsg.Caption = photo.CaptionText
+		
+		// Add caption entities
+		if len(photo.CaptionEntities) > 0 {
+			tgEntities := make([]tgbotapi.MessageEntity, 0, len(photo.CaptionEntities))
+			for _, ent := range photo.CaptionEntities {
+				tgEntities = append(tgEntities, tgbotapi.MessageEntity{
+					Type:     ent.Type,
+					Offset:   ent.Offset,
+					Length:   ent.Length,
+					URL:      ent.URL,
+					Language: ent.Language,
+				})
+			}
+			photoMsg.CaptionEntities = tgEntities
+		}
+	}
+	
+	if _, err := t.bot.Send(photoMsg); err != nil {
+		return fmt.Errorf("send photo: %w", err)
+	}
+	
+	t.logger.Debugf("[telegram] sent photo: %s", photo.FileName)
 	return nil
 }
 
