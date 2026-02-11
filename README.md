@@ -37,6 +37,12 @@ make run
 
 # Start gateway (channels + cron + heartbeat)
 make gateway
+
+# Skills management
+make skills-list              # List installed skills
+make skills-install [name]    # Install skill(s) (with y/n confirmation)
+make skills-update [name]     # Update skill(s) (with y/n confirmation)
+make skills-uninstall <name>  # Uninstall a skill (with y/n confirmation)
 ```
 
 ## Makefile Targets
@@ -49,6 +55,10 @@ make gateway
 | `make onboard` | Initialize config and workspace |
 | `make status` | Show myclaw status |
 | `make setup` | Interactive config setup (generates `~/.myclaw/config.json`) |
+| `make skills-list` | List installed skills |
+| `make skills-install [name]` | Install skill(s) (name or all) |
+| `make skills-update [name]` | Update skill(s) (name or all) |
+| `make skills-uninstall <name>` | Uninstall a skill (required) |
 | `make tunnel` | Start cloudflared tunnel for Feishu webhook |
 | `make test` | Run tests |
 | `make test-race` | Run tests with race detection |
