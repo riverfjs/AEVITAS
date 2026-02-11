@@ -386,6 +386,10 @@ func (g *Gateway) extractAskUserQuestion(resp *api.Response) string {
 		return ""
 	}
 	
+	// Collect tool names for summary logging
+	var toolNames []string
+	var askUserResult string
+	
 	for _, event := range resp.HookEvents {
 		if event.Type != events.PostToolUse {
 			continue
@@ -396,7 +400,7 @@ func (g *Gateway) extractAskUserQuestion(resp *api.Response) string {
 			continue
 		}
 		
-		g.logger.Debugf("[gateway] PostToolUse tool: %s", payload.Name)
+		toolNames = append(toolNames, payload.Name)
 		
 		if payload.Name != "AskUserQuestion" && payload.Name != "ask_user_question" {
 			continue
@@ -404,11 +408,16 @@ func (g *Gateway) extractAskUserQuestion(resp *api.Response) string {
 		
 		// payload.Result is the formatted question string
 		if output, ok := payload.Result.(string); ok && output != "" {
-			return output
+			askUserResult = output
 		}
 	}
 	
-	return ""
+	// Log summary if tools were used
+	if len(toolNames) > 0 {
+		g.logger.Debugf("[gateway] PostToolUse: used %d tool(s): %v", len(toolNames), toolNames)
+	}
+	
+	return askUserResult
 }
 
 func (g *Gateway) Shutdown() error {
@@ -427,3 +436,4 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
+

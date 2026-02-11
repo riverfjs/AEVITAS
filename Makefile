@@ -30,18 +30,51 @@ status: build
 skills-list: build
 	./$(BINARY) skills list
 
-## Install or update all skills
+## Install or update skills (usage: make skills-install [skill-name])
 skills-install: build
-	./$(BINARY) skills install
+	@SKILL="$(filter-out $@,$(MAKECMDGOALS))"; \
+	if [ -z "$$SKILL" ]; then \
+		read -p "Install all skills? [y/N] " -n 1 -r; echo; \
+		if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+			./$(BINARY) skills install; \
+		fi \
+	else \
+		read -p "Install skill '$$SKILL'? [y/N] " -n 1 -r; echo; \
+		if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+			./$(BINARY) skills install $$SKILL; \
+		fi \
+	fi
 
-## Update/reinstall all skills (overwrite existing)
+## Update skills (usage: make skills-update [skill-name])
 skills-update: build
-	./$(BINARY) skills update
+	@SKILL="$(filter-out $@,$(MAKECMDGOALS))"; \
+	if [ -z "$$SKILL" ]; then \
+		read -p "Update all skills? [y/N] " -n 1 -r; echo; \
+		if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+			./$(BINARY) skills update; \
+		fi \
+	else \
+		read -p "Update skill '$$SKILL'? [y/N] " -n 1 -r; echo; \
+		if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+			./$(BINARY) skills update $$SKILL; \
+		fi \
+	fi
 
-## Uninstall a skill
+## Uninstall a skill (usage: make skills-uninstall <skill-name>)
 skills-uninstall: build
-	@test -n "$(SKILL)" || (echo "Usage: make skills-uninstall SKILL=<skill-name>" && exit 1)
-	./$(BINARY) skills uninstall $(SKILL)
+	@SKILL="$(filter-out $@,$(MAKECMDGOALS))"; \
+	if [ -z "$$SKILL" ]; then \
+		echo "Usage: make skills-uninstall <skill-name>"; \
+		exit 1; \
+	fi; \
+	read -p "Uninstall skill '$$SKILL'? [y/N] " -n 1 -r; echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		./$(BINARY) skills uninstall $$SKILL; \
+	fi
+
+# Prevent make from treating skill names as targets
+%:
+	@:
 
 ## Verify skills integrity
 skills-verify: build
@@ -96,18 +129,32 @@ lint:
 help:
 	@echo "myclaw Makefile targets:"
 	@echo ""
-	@echo "  build           Build binary"
-	@echo "  run             Run agent REPL"
-	@echo "  gateway         Start gateway (channels + cron)"
-	@echo "  onboard         Initialize config and workspace"
-	@echo "  status          Show myclaw status"
-	@echo "  setup           Interactive config setup"
-	@echo "  tunnel          Start cloudflared tunnel for Feishu"
-	@echo "  test            Run tests"
-	@echo "  test-race       Run tests with race detection"
-	@echo "  test-cover      Run tests with coverage report"
-	@echo "  docker-up       Docker build and start"
+	@echo "Core:"
+	@echo "  build            Build binary"
+	@echo "  run              Run agent REPL"
+	@echo "  gateway          Start gateway (channels + cron + heartbeat)"
+	@echo "  onboard          Initialize config and workspace"
+	@echo "  status           Show myclaw status"
+	@echo "  setup            Interactive config setup"
+	@echo ""
+	@echo "Skills Management:"
+	@echo "  skills-list         List installed skills"
+	@echo "  skills-install [name] Install skill(s) (name or all)"
+	@echo "  skills-update [name]  Update skill(s) (name or all)"
+	@echo "  skills-uninstall <name> Uninstall a skill (required)"
+	@echo "  skills-verify       Verify skills integrity"
+	@echo ""
+	@echo "Testing:"
+	@echo "  test             Run all tests"
+	@echo "  test-race        Run tests with race detection"
+	@echo "  test-cover       Run tests with coverage report"
+	@echo ""
+	@echo "Deployment:"
+	@echo "  tunnel           Start cloudflared tunnel for Feishu"
+	@echo "  docker-up        Docker build and start"
 	@echo "  docker-up-tunnel Docker start with cloudflared tunnel"
-	@echo "  docker-down     Docker stop"
-	@echo "  clean           Remove build artifacts"
-	@echo "  lint            Run golangci-lint"
+	@echo "  docker-down      Docker stop"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  clean            Remove build artifacts"
+	@echo "  lint             Run golangci-lint"

@@ -6,6 +6,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -203,7 +204,46 @@ func (t *TelegramChannel) Send(msg bus.OutboundMessage) error {
 		return fmt.Errorf("invalid chat id %q: %w", msg.ChatID, err)
 	}
 
+	// Check if content contains image paths (detect screenshot paths)
+	if imagePath := extractImagePath(msg.Content); imagePath != "" {
+		// Send image first
+		if err := t.sendPhoto(chatID, imagePath); err != nil {
+			t.logger.Warnf("failed to send photo, falling back to text: %v", err)
+			// Continue to send text message as fallback
+		}
+		// Remove image path from content
+		msg.Content = strings.ReplaceAll(msg.Content, imagePath, "")
+	}
+
 	return t.sendNewMessage(chatID, msg.Content)
+}
+
+// extractImagePath extracts image file path from content
+func extractImagePath(content string) string {
+	// Match screenshot paths like /var/folders/.../screenshot-*.png
+	re := regexp.MustCompile(`(/[^\s]+/screenshot-[0-9]+\.png)`)
+	matches := re.FindStringSubmatch(content)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+// sendPhoto sends a photo to Telegram
+func (t *TelegramChannel) sendPhoto(chatID int64, imagePath string) error {
+	// Check if file exists
+	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
+		return fmt.Errorf("image file not found: %s", imagePath)
+	}
+
+	photo := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(imagePath))
+	_, err := t.bot.Send(photo)
+	if err != nil {
+		return fmt.Errorf("send telegram photo: %w", err)
+	}
+	
+	t.logger.Infof("sent photo to telegram chat_id=%d path=%s", chatID, imagePath)
+	return nil
 }
 
 // sendNewMessage sends a new message (potentially split into multiple parts)
