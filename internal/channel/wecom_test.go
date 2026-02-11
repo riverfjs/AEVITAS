@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
 	"github.com/stellarlinkco/myclaw/internal/bus"
 	"github.com/stellarlinkco/myclaw/internal/config"
 )
@@ -51,7 +52,7 @@ func TestNewWeComChannel_Valid(t *testing.T) {
 		Token:          "verify-token",
 		EncodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
 		ReceiveID:      "recv-id-1",
-	}, b)
+	}, b, sdklogger.NewDefault())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestNewWeComChannel_Valid(t *testing.T) {
 
 func TestNewWeComChannel_MissingRequiredConfig(t *testing.T) {
 	b := bus.NewMessageBus(10)
-	_, err := NewWeComChannel(config.WeComConfig{}, b)
+	_, err := NewWeComChannel(config.WeComConfig{}, b, sdklogger.NewDefault())
 	if err == nil {
 		t.Fatal("expected error for empty config")
 	}
@@ -73,7 +74,7 @@ func TestWeComChannel_Send_NilClient(t *testing.T) {
 	ch, _ := NewWeComChannelWithFactory(config.WeComConfig{
 		Token:          "verify-token",
 		EncodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
-	}, b, nil)
+	}, b, nil, sdklogger.NewDefault())
 
 	err := ch.Send(bus.OutboundMessage{ChatID: "zhangsan", Content: "hello"})
 	if err == nil {
@@ -297,7 +298,7 @@ func TestWeComChannel_Send_Success(t *testing.T) {
 		Token:          "verify-token",
 		EncodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
 		AllowFrom:      []string{"zhangsan"},
-	}, b, mockWeComClientFactory(mock))
+	}, b, mockWeComClientFactory(mock), sdklogger.NewDefault())
 	if err != nil {
 		t.Fatalf("new channel error: %v", err)
 	}
@@ -331,7 +332,7 @@ func TestWeComChannel_Send_ResponseURLMissing(t *testing.T) {
 		Token:          "verify-token",
 		EncodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
 		AllowFrom:      []string{"zhangsan"},
-	}, b, mockWeComClientFactory(mock))
+	}, b, mockWeComClientFactory(mock), sdklogger.NewDefault())
 	if err != nil {
 		t.Fatalf("new channel error: %v", err)
 	}
@@ -350,7 +351,7 @@ func TestChannelManager_WeComEnabled_MissingConfig(t *testing.T) {
 	b := bus.NewMessageBus(10)
 	_, err := NewChannelManager(config.ChannelsConfig{
 		WeCom: config.WeComConfig{Enabled: true},
-	}, b)
+	}, b, sdklogger.NewDefault())
 	if err == nil {
 		t.Fatal("expected error for missing wecom required config")
 	}
@@ -365,7 +366,7 @@ func TestChannelManager_WeComEnabled(t *testing.T) {
 			EncodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
 			AllowFrom:      []string{"zhangsan"},
 		},
-	}, b)
+	}, b, sdklogger.NewDefault())
 	if err != nil {
 		t.Fatalf("new channel manager error: %v", err)
 	}
@@ -386,7 +387,7 @@ func newTestWeComChannel(t *testing.T, cfg config.WeComConfig) (*WeComChannel, *
 	t.Helper()
 	b := bus.NewMessageBus(10)
 	mock := &mockWeComClient{}
-	ch, err := NewWeComChannelWithFactory(cfg, b, mockWeComClientFactory(mock))
+	ch, err := NewWeComChannelWithFactory(cfg, b, mockWeComClientFactory(mock), sdklogger.NewDefault())
 	if err != nil {
 		t.Fatalf("new wecom channel error: %v", err)
 	}

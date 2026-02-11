@@ -7,8 +7,20 @@ import (
 	"github.com/stellarlinkco/myclaw/internal/bus"
 )
 
+// mockSessionResetter implements SessionResetter interface
+type mockSessionResetter struct {
+	clearFunc func(sessionID string) error
+}
+
+func (m *mockSessionResetter) ClearSession(sessionID string) error {
+	if m.clearFunc != nil {
+		return m.clearFunc(sessionID)
+	}
+	return nil
+}
+
 func TestCommandHandler_HandleStart(t *testing.T) {
-	handler := NewCommandHandler(nil)
+	handler := NewCommandHandler(nil, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -33,7 +45,7 @@ func TestCommandHandler_HandleStart(t *testing.T) {
 }
 
 func TestCommandHandler_HandleHelp(t *testing.T) {
-	handler := NewCommandHandler(nil)
+	handler := NewCommandHandler(nil, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -61,13 +73,15 @@ func TestCommandHandler_HandleReset_Success(t *testing.T) {
 	resetCalled := false
 	var capturedSessionKey string
 	
-	resetFunc := func(sessionKey string) error {
-		resetCalled = true
-		capturedSessionKey = sessionKey
-		return nil
+	resetter := &mockSessionResetter{
+		clearFunc: func(sessionID string) error {
+			resetCalled = true
+			capturedSessionKey = sessionID
+			return nil
+		},
 	}
 	
-	handler := NewCommandHandler(resetFunc)
+	handler := NewCommandHandler(resetter, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "telegram",
@@ -91,13 +105,13 @@ func TestCommandHandler_HandleReset_Success(t *testing.T) {
 		t.Errorf("Expected session key %s, got %s", expectedSessionKey, capturedSessionKey)
 	}
 	
-	if !contains(result.Response, "✅") || !contains(result.Response, "reset") {
+	if !contains(result.Response, "✅") || !contains(result.Response, "Reset") {
 		t.Errorf("Expected success message, got: %s", result.Response)
 	}
 }
 
 func TestCommandHandler_HandleReset_NoFunction(t *testing.T) {
-	handler := NewCommandHandler(nil)
+	handler := NewCommandHandler(nil, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -120,11 +134,13 @@ func TestCommandHandler_HandleReset_NoFunction(t *testing.T) {
 func TestCommandHandler_HandleReset_Error(t *testing.T) {
 	testErr := errors.New("reset failed")
 	
-	resetFunc := func(sessionKey string) error {
-		return testErr
+	resetter := &mockSessionResetter{
+		clearFunc: func(sessionID string) error {
+			return testErr
+		},
 	}
 	
-	handler := NewCommandHandler(resetFunc)
+	handler := NewCommandHandler(resetter, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -145,7 +161,7 @@ func TestCommandHandler_HandleReset_Error(t *testing.T) {
 }
 
 func TestCommandHandler_UnknownCommand(t *testing.T) {
-	handler := NewCommandHandler(nil)
+	handler := NewCommandHandler(nil, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -156,17 +172,17 @@ func TestCommandHandler_UnknownCommand(t *testing.T) {
 	
 	result := handler.HandleCommand(msg)
 	
-	if result.Handled {
-		t.Error("Expected unknown command not to be handled")
+	if !result.Handled {
+		t.Error("Expected unknown command to be handled with error message")
 	}
 	
-	if result.Response != "" {
-		t.Errorf("Expected empty response for unknown command, got: %s", result.Response)
+	if !contains(result.Response, "Unknown command") || !contains(result.Response, "/unknown") {
+		t.Errorf("Expected unknown command error message, got: %s", result.Response)
 	}
 }
 
 func TestCommandHandler_NotACommand(t *testing.T) {
-	handler := NewCommandHandler(nil)
+	handler := NewCommandHandler(nil, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -187,7 +203,7 @@ func TestCommandHandler_NotACommand(t *testing.T) {
 }
 
 func TestCommandHandler_EmptyContent(t *testing.T) {
-	handler := NewCommandHandler(nil)
+	handler := NewCommandHandler(nil, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -204,7 +220,7 @@ func TestCommandHandler_EmptyContent(t *testing.T) {
 }
 
 func TestCommandHandler_CaseInsensitive(t *testing.T) {
-	handler := NewCommandHandler(nil)
+	handler := NewCommandHandler(nil, "")
 	
 	testCases := []string{"/START", "/Start", "/StArT", "/HELP", "/Help", "/RESET", "/Reset"}
 	
@@ -225,7 +241,7 @@ func TestCommandHandler_CaseInsensitive(t *testing.T) {
 }
 
 func TestCommandHandler_WithWhitespace(t *testing.T) {
-	handler := NewCommandHandler(nil)
+	handler := NewCommandHandler(nil, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -242,7 +258,7 @@ func TestCommandHandler_WithWhitespace(t *testing.T) {
 }
 
 func TestCommandHandler_CommandWithArgs(t *testing.T) {
-	handler := NewCommandHandler(nil)
+	handler := NewCommandHandler(nil, "")
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",

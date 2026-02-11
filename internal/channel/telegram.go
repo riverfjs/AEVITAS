@@ -3,7 +3,6 @@ package channel
 import (
 	"context"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,11 +14,10 @@ import (
 	"time"
 
 	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
-	"github.com/gomarkdown/markdown"
-	mdhtml "github.com/gomarkdown/markdown/html"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegramify "github.com/riverfjs/telegramify-go"
 	"github.com/stellarlinkco/myclaw/internal/bus"
 	"github.com/stellarlinkco/myclaw/internal/config"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 const telegramChannelName = "telegram"
@@ -188,9 +186,27 @@ func (t *TelegramChannel) handleMessage(msg *tgbotapi.Message) {
 
 	chatID := strconv.FormatInt(msg.Chat.ID, 10)
 
-	// Send typing indicator
-	typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
-	t.bot.Send(typing)
+	// Start continuous typing indicator (stops when message is received in Inbound channel)
+	// Telegram typing indicator lasts 5 seconds, so we resend every 4 seconds
+	stopTyping := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		
+		// Send first typing immediately
+		typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
+		t.bot.Send(typing)
+		
+		for {
+			select {
+			case <-stopTyping:
+				return
+			case <-ticker.C:
+				typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
+				t.bot.Send(typing)
+			}
+		}
+	}()
 
 	t.bus.Inbound <- bus.InboundMessage{
 		Channel:   telegramChannelName,
@@ -200,9 +216,10 @@ func (t *TelegramChannel) handleMessage(msg *tgbotapi.Message) {
 		Media:     media,
 		Timestamp: time.Unix(int64(msg.Date), 0),
 		Metadata: map[string]any{
-			"username":   msg.From.UserName,
-			"first_name": msg.From.FirstName,
-			"message_id": msg.MessageID,
+			"username":      msg.From.UserName,
+			"first_name":    msg.From.FirstName,
+			"message_id":    msg.MessageID,
+			"stop_typing":   stopTyping, // Pass channel to gateway to stop typing
 		},
 	}
 }
@@ -313,34 +330,46 @@ func (t *TelegramChannel) sendPhoto(chatID int64, imagePath string) error {
 }
 
 // sendNewMessage sends a new message (potentially split into multiple parts)
+// Uses Telegram MessageEntity format instead of HTML/Markdown parse modes
 func (t *TelegramChannel) sendNewMessage(chatID int64, content string) error {
-	// Convert markdown to Telegram HTML
-	htmlContent := toTelegramHTML(content)
-
-	// Telegram has a 4096 char limit per message
-	const maxLen = 4000
+	// Convert Markdown to plain text + entities using telegramify
+	text, entities := telegramify.Convert(content, false, nil)
 	
-	for len(htmlContent) > 0 {
-		chunk := htmlContent
-		if len(chunk) > maxLen {
-			// Try to split at last newline before maxLen
-			idx := strings.LastIndex(chunk[:maxLen], "\n")
-			if idx > 0 {
-				chunk = chunk[:idx]
-			} else {
-				chunk = chunk[:maxLen]
-			}
-		}
-		htmlContent = htmlContent[len(chunk):]
-
-		tgMsg := tgbotapi.NewMessage(chatID, chunk)
-		tgMsg.ParseMode = tgbotapi.ModeHTML
+	// Split into chunks if needed (Telegram limit is 4096 UTF-16 code units)
+	const maxUTF16Len = 4090 // Leave some margin
+	chunks := telegramify.SplitEntities(text, entities, maxUTF16Len)
+	
+	// Send each chunk
+	for _, chunk := range chunks {
+		tgMsg := tgbotapi.NewMessage(chatID, chunk.Text)
 		
+		// Convert our MessageEntity to Telegram's format
+		if len(chunk.Entities) > 0 {
+			tgEntities := make([]tgbotapi.MessageEntity, 0, len(chunk.Entities))
+			for _, ent := range chunk.Entities {
+				tgEnt := tgbotapi.MessageEntity{
+					Type:   ent.Type,
+					Offset: ent.Offset,
+					Length: ent.Length,
+				}
+				if ent.URL != "" {
+					tgEnt.URL = ent.URL
+				}
+				if ent.Language != "" {
+					tgEnt.Language = ent.Language
+				}
+				// Note: CustomEmojiID not supported by tgbotapi v5
+				tgEntities = append(tgEntities, tgEnt)
+			}
+			tgMsg.Entities = tgEntities
+		}
+		
+		// Send the message (do NOT set ParseMode - entities are used directly)
 		if _, err := t.bot.Send(tgMsg); err != nil {
-			// Fallback to plain text if HTML parsing fails
-			tgMsg.ParseMode = ""
-			tgMsg.Text = content
-			if _, err2 := t.bot.Send(tgMsg); err2 != nil {
+			// Fallback to plain text if entity parsing fails
+			t.logger.Warnf("[telegram] Failed to send with entities, falling back to plain text: %v", err)
+			fallbackMsg := tgbotapi.NewMessage(chatID, text) // Use original full text as fallback
+			if _, err2 := t.bot.Send(fallbackMsg); err2 != nil {
 				return fmt.Errorf("send telegram message: %w", err2)
 			}
 			return nil
@@ -349,61 +378,3 @@ func (t *TelegramChannel) sendNewMessage(chatID int64, content string) error {
 	return nil
 }
 
-// toTelegramHTML converts markdown to Telegram-compatible HTML using gomarkdown library.
-// Telegram supports: <b>, <strong>, <i>, <em>, <u>, <ins>, <s>, <strike>, <del>,
-// <code>, <pre>, <a href="...">.
-func toTelegramHTML(md string) string {
-	// Configure HTML renderer for Telegram compatibility
-	htmlFlags := mdhtml.CommonFlags | mdhtml.HrefTargetBlank
-	opts := mdhtml.RendererOptions{
-		Flags: htmlFlags,
-	}
-	renderer := mdhtml.NewRenderer(opts)
-
-	// Render markdown to HTML
-	htmlOutput := markdown.ToHTML([]byte(md), nil, renderer)
-	htmlStr := string(htmlOutput)
-	
-	// Clean up for Telegram compatibility
-	// Remove unsupported tags but keep their content
-	htmlStr = cleanForTelegram(htmlStr)
-	
-	// Decode HTML entities (like &rsquo; -> ') for Telegram
-	htmlStr = html.UnescapeString(htmlStr)
-	
-	return strings.TrimSpace(htmlStr)
-}
-
-// cleanForTelegram removes unsupported HTML tags while preserving content
-func cleanForTelegram(html string) string {
-	// Remove <p> tags (Telegram doesn't support them, use \n instead)
-	html = regexp.MustCompile(`<p>`).ReplaceAllString(html, "")
-	html = regexp.MustCompile(`</p>`).ReplaceAllString(html, "\n")
-	
-	// Convert headings to bold
-	html = regexp.MustCompile(`<h[1-6]>`).ReplaceAllString(html, "\n<b>")
-	html = regexp.MustCompile(`</h[1-6]>`).ReplaceAllString(html, "</b>\n")
-	
-	// Convert <ul>, <ol>, <li> to bullets/numbers
-	html = regexp.MustCompile(`<ul>\s*`).ReplaceAllString(html, "")
-	html = regexp.MustCompile(`\s*</ul>`).ReplaceAllString(html, "")
-	html = regexp.MustCompile(`<ol>\s*`).ReplaceAllString(html, "")
-	html = regexp.MustCompile(`\s*</ol>`).ReplaceAllString(html, "")
-	html = regexp.MustCompile(`<li>`).ReplaceAllString(html, "• ")
-	html = regexp.MustCompile(`</li>`).ReplaceAllString(html, "\n")
-	
-	// Convert <strong> to <b>, <em> to <i>
-	html = strings.ReplaceAll(html, "<strong>", "<b>")
-	html = strings.ReplaceAll(html, "</strong>", "</b>")
-	html = strings.ReplaceAll(html, "<em>", "<i>")
-	html = strings.ReplaceAll(html, "</em>", "</i>")
-	
-	// Clean up excessive newlines
-	html = regexp.MustCompile(`\n{3,}`).ReplaceAllString(html, "\n\n")
-	
-	// Convert remaining newlines to <br> for Telegram HTML mode
-	// Telegram HTML mode doesn't render plain \n as line breaks
-	html = strings.ReplaceAll(html, "\n", "<br>")
-	
-	return html
-}

@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
 	"time"
 
 	"github.com/stellarlinkco/myclaw/internal/bus"
@@ -42,7 +44,7 @@ func TestNewFeishuChannel_Valid(t *testing.T) {
 	ch, err := NewFeishuChannel(config.FeishuConfig{
 		AppID:     "cli_test",
 		AppSecret: "secret",
-	}, b)
+	}, b, sdklogger.NewDefault())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +57,7 @@ func TestNewFeishuChannel_MissingAppID(t *testing.T) {
 	b := bus.NewMessageBus(10)
 	_, err := NewFeishuChannel(config.FeishuConfig{
 		AppSecret: "secret",
-	}, b)
+	}, b, sdklogger.NewDefault())
 	if err == nil {
 		t.Error("expected error for missing app_id")
 	}
@@ -65,7 +67,7 @@ func TestNewFeishuChannel_MissingAppSecret(t *testing.T) {
 	b := bus.NewMessageBus(10)
 	_, err := NewFeishuChannel(config.FeishuConfig{
 		AppID: "cli_test",
-	}, b)
+	}, b, sdklogger.NewDefault())
 	if err == nil {
 		t.Error("expected error for missing app_secret")
 	}
@@ -75,7 +77,7 @@ func TestFeishuChannel_Send_NilClient(t *testing.T) {
 	b := bus.NewMessageBus(10)
 	ch, _ := NewFeishuChannel(config.FeishuConfig{
 		AppID: "cli_test", AppSecret: "secret",
-	}, b)
+	}, b, sdklogger.NewDefault())
 
 	err := ch.Send(bus.OutboundMessage{ChatID: "chat_123", Content: "hello"})
 	if err == nil {
@@ -89,7 +91,7 @@ func TestFeishuChannel_Send_Success(t *testing.T) {
 
 	ch, _ := NewFeishuChannelWithFactory(config.FeishuConfig{
 		AppID: "cli_test", AppSecret: "secret",
-	}, b, mockFeishuClientFactory(mock))
+	}, b, mockFeishuClientFactory(mock), sdklogger.NewDefault())
 
 	ch.client = mock
 
@@ -111,7 +113,7 @@ func TestFeishuChannel_Send_Error(t *testing.T) {
 
 	ch, _ := NewFeishuChannelWithFactory(config.FeishuConfig{
 		AppID: "cli_test", AppSecret: "secret",
-	}, b, mockFeishuClientFactory(mock))
+	}, b, mockFeishuClientFactory(mock), sdklogger.NewDefault())
 	ch.client = mock
 
 	err := ch.Send(bus.OutboundMessage{ChatID: "chat_123", Content: "hello"})
@@ -124,7 +126,7 @@ func TestFeishuChannel_Stop_NotStarted(t *testing.T) {
 	b := bus.NewMessageBus(10)
 	ch, _ := NewFeishuChannel(config.FeishuConfig{
 		AppID: "cli_test", AppSecret: "secret",
-	}, b)
+	}, b, sdklogger.NewDefault())
 
 	err := ch.Stop()
 	if err != nil {
@@ -138,7 +140,7 @@ func newTestFeishuChannel(t *testing.T, cfg config.FeishuConfig) (*FeishuChannel
 	t.Helper()
 	b := bus.NewMessageBus(10)
 	mock := &mockFeishuClient{token: "test-token"}
-	ch, err := NewFeishuChannelWithFactory(cfg, b, mockFeishuClientFactory(mock))
+	ch, err := NewFeishuChannelWithFactory(cfg, b, mockFeishuClientFactory(mock), sdklogger.NewDefault())
 	if err != nil {
 		t.Fatalf("NewFeishuChannelWithFactory error: %v", err)
 	}
@@ -484,7 +486,7 @@ func TestFeishuChannel_StartStop(t *testing.T) {
 
 	ch, err := NewFeishuChannelWithFactory(config.FeishuConfig{
 		AppID: "cli_test", AppSecret: "secret", Port: 0,
-	}, b, mockFeishuClientFactory(mock))
+	}, b, mockFeishuClientFactory(mock), sdklogger.NewDefault())
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -514,7 +516,7 @@ func TestChannelManager_FeishuEnabled(t *testing.T) {
 			AppID:     "cli_test",
 			AppSecret: "secret",
 		},
-	}, b)
+	}, b, sdklogger.NewDefault())
 	if err != nil {
 		t.Fatalf("NewChannelManager error: %v", err)
 	}
@@ -532,7 +534,7 @@ func TestChannelManager_FeishuEnabled_MissingConfig(t *testing.T) {
 			Enabled: true,
 			// Missing AppID and AppSecret
 		},
-	}, b)
+	}, b, sdklogger.NewDefault())
 	if err == nil {
 		t.Error("expected error for missing feishu config")
 	}

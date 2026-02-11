@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 
@@ -299,6 +298,11 @@ func (g *Gateway) processLoop(ctx context.Context) {
 }
 
 func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
+	// Stop typing indicator when processing completes (deferred)
+	if stopTyping, ok := msg.Metadata["stop_typing"].(chan struct{}); ok {
+		defer close(stopTyping)
+	}
+	
 	// Build attachments from media
 	var attachments []api.Attachment
 	for _, mediaPath := range msg.Media {
@@ -341,9 +345,6 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 		}
 		return
 	}
-	
-	// Extract screenshot paths from tool results
-	screenshotPaths := g.extractScreenshotPaths(resp)
 	
 	// 构建响应内容（优先级：Commands > Skills > AskUserQuestion > Subagent > Result.Output）
 	var content strings.Builder
@@ -388,15 +389,17 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 		content.WriteString(resp.Result.Output)
 	}
 	
-	// 6. Append screenshot paths if any
-	if len(screenshotPaths) > 0 {
-		for _, path := range screenshotPaths {
-			content.WriteString("\n")
-			content.WriteString(path)
+	result := strings.TrimSpace(content.String())
+	
+	// 6. Append attachments from SDK (like AskUserQuestion, just send what SDK returns)
+	if len(resp.Attachments) > 0 {
+		for _, att := range resp.Attachments {
+			result += "\n" + att.Path
 		}
+		g.logger.Debugf("[gateway] Appended %d attachment(s)", len(resp.Attachments))
 	}
 	
-	result := strings.TrimSpace(content.String())
+	result = strings.TrimSpace(result)
 	if result != "" {
 		g.logger.Infof("[gateway] outbound to %s/%s: %s", msg.Channel, msg.ChatID, truncate(result, 80))
 		g.bus.Outbound <- bus.OutboundMessage{
@@ -447,55 +450,6 @@ func (g *Gateway) extractAskUserQuestion(resp *api.Response) string {
 	}
 	
 	return askUserResult
-}
-
-// extractScreenshotPaths extracts screenshot file paths from tool execution results
-func (g *Gateway) extractScreenshotPaths(resp *api.Response) []string {
-	if resp == nil {
-		return nil
-	}
-	
-	var paths []string
-	
-	for _, event := range resp.HookEvents {
-		if event.Type != events.PostToolUse {
-			continue
-		}
-		
-		payload, ok := event.Payload.(events.ToolResultPayload)
-		if !ok {
-			continue
-		}
-		
-		// Check if it's a Bash tool call
-		if payload.Name != "Bash" {
-			continue
-		}
-		
-		// Try to parse Result as a map
-		if resultMap, ok := payload.Result.(map[string]interface{}); ok {
-			// Check if it contains a "path" field with screenshot
-			if pathStr, ok := resultMap["path"].(string); ok {
-				if strings.Contains(pathStr, "screenshot-") && strings.HasSuffix(pathStr, ".png") {
-					paths = append(paths, pathStr)
-					g.logger.Debugf("[gateway] Found screenshot: %s", pathStr)
-				}
-			}
-		}
-		
-		// Also try string result (in case it's JSON string)
-		if resultStr, ok := payload.Result.(string); ok {
-			// Simple regex to extract screenshot paths
-			re := regexp.MustCompile(`(/[^\s"]+/screenshot-[0-9]+\.png)`)
-			matches := re.FindAllString(resultStr, -1)
-			for _, match := range matches {
-				paths = append(paths, match)
-				g.logger.Debugf("[gateway] Found screenshot: %s", match)
-			}
-		}
-	}
-	
-	return paths
 }
 
 func (g *Gateway) Shutdown() error {
