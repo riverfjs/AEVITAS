@@ -1,6 +1,6 @@
 # myclaw
 
-Personal AI assistant built on [agentsdk-go](https://github.com/cexll/agentsdk-go).
+Personal AI assistant built on [agentsdk-go](https://github.com/cexll/agentsdk-go), forked from [stellarlinkco/myclaw](https://github.com/stellarlinkco/myclaw).
 
 ## Features
 
