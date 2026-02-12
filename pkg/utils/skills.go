@@ -5,15 +5,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+)
+
+const (
+	// SkillsTemplateDir is the directory containing built-in skill templates
+	SkillsTemplateDir = "skills"
 )
 
 // CopyBuiltinSkills copies built-in skills from project template to user workspace (skip existing)
 func CopyBuiltinSkills(workspace string) error {
-	// Skills template is always in project workspace/.claude/skills
-	templateDir := "workspace/.claude/skills"
-	
-	if _, err := os.Stat(templateDir); err != nil {
-		return fmt.Errorf("skills template directory not found: %s", templateDir)
+	if _, err := os.Stat(SkillsTemplateDir); err != nil {
+		return fmt.Errorf("skills template directory not found: %s", SkillsTemplateDir)
 	}
 	
 	targetDir := filepath.Join(workspace, ".claude", "skills")
@@ -21,7 +24,7 @@ func CopyBuiltinSkills(workspace string) error {
 		return err
 	}
 	
-	entries, err := os.ReadDir(templateDir)
+	entries, err := os.ReadDir(SkillsTemplateDir)
 	if err != nil {
 		return err
 	}
@@ -32,7 +35,7 @@ func CopyBuiltinSkills(workspace string) error {
 			continue
 		}
 		skillName := entry.Name()
-		srcPath := filepath.Join(templateDir, skillName)
+		srcPath := filepath.Join(SkillsTemplateDir, skillName)
 		dstPath := filepath.Join(targetDir, skillName)
 		
 		// Skip if already exists
@@ -59,11 +62,8 @@ func CopyBuiltinSkills(workspace string) error {
 
 // UpdateBuiltinSkills updates all built-in skills (overwrite existing)
 func UpdateBuiltinSkills(workspace string) error {
-	// Skills template is always in project workspace/.claude/skills
-	templateDir := "workspace/.claude/skills"
-	
-	if _, err := os.Stat(templateDir); err != nil {
-		return fmt.Errorf("skills template directory not found: %s", templateDir)
+	if _, err := os.Stat(SkillsTemplateDir); err != nil {
+		return fmt.Errorf("skills template directory not found: %s", SkillsTemplateDir)
 	}
 	
 	targetDir := filepath.Join(workspace, ".claude", "skills")
@@ -71,7 +71,7 @@ func UpdateBuiltinSkills(workspace string) error {
 		return err
 	}
 	
-	entries, err := os.ReadDir(templateDir)
+	entries, err := os.ReadDir(SkillsTemplateDir)
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func UpdateBuiltinSkills(workspace string) error {
 			continue
 		}
 		skillName := entry.Name()
-		srcPath := filepath.Join(templateDir, skillName)
+		srcPath := filepath.Join(SkillsTemplateDir, skillName)
 		dstPath := filepath.Join(targetDir, skillName)
 		
 		// Remove existing if present
@@ -154,8 +154,7 @@ func ListInstalledSkills(workspace string) ([]string, error) {
 
 // InstallSkill installs a specific skill (skip if exists)
 func InstallSkill(workspace, skillName string) error {
-	// Skills template is always in project workspace/.claude/skills
-	srcPath := filepath.Join("workspace", ".claude", "skills", skillName)
+	srcPath := filepath.Join(SkillsTemplateDir, skillName)
 	
 	if _, err := os.Stat(srcPath); err != nil {
 		return fmt.Errorf("skill %s not found in templates", skillName)
@@ -180,8 +179,7 @@ func InstallSkill(workspace, skillName string) error {
 
 // UpdateSkill updates a specific skill (overwrite if exists)
 func UpdateSkill(workspace, skillName string) error {
-	// Skills template is always in project workspace/.claude/skills
-	srcPath := filepath.Join("workspace", ".claude", "skills", skillName)
+	srcPath := filepath.Join(SkillsTemplateDir, skillName)
 	
 	if _, err := os.Stat(srcPath); err != nil {
 		return fmt.Errorf("skill %s not found in templates", skillName)
@@ -256,5 +254,27 @@ func VerifyAllSkills(workspace string) (map[string]error, error) {
 	}
 	
 	return results, nil
+}
+
+// FormatRelativeTime formats a Unix timestamp as a relative time string
+func FormatRelativeTime(unixTime int64) string {
+	t := time.Unix(unixTime, 0)
+	now := time.Now()
+	diff := now.Sub(t)
+	
+	if diff < time.Minute {
+		return "just now"
+	} else if diff < time.Hour {
+		mins := int(diff.Minutes())
+		return fmt.Sprintf("%d minute(s) ago", mins)
+	} else if diff < 24*time.Hour {
+		hours := int(diff.Hours())
+		return fmt.Sprintf("%d hour(s) ago", hours)
+	} else if diff < 7*24*time.Hour {
+		days := int(diff.Hours() / 24)
+		return fmt.Sprintf("%d day(s) ago", days)
+	} else {
+		return t.Format("2006-01-02 15:04")
+	}
 }
 

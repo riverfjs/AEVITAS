@@ -2,7 +2,13 @@
 name: skill-creator
 description: Create or update skills for myclaw. Use when user asks to create a new skill, add functionality, or when you need to package reusable scripts/workflows as a skill. Triggers on requests like "create a skill for X", "make a new skill", or when repeatedly writing similar code that should be packaged.
 allowed-tools:
+  - Write
+  - Edit
+  - Read
+  - Grep
+  - Glob
   - Bash
+  - Task/TaskCreate/TaskGet/TaskList/TaskUpdate
 ---
 
 # Skill Creator
@@ -14,213 +20,103 @@ Guide for creating effective skills in myclaw.
 1. **Concise** - Only add what agent doesn't know
 2. **Self-contained** - Handle own dependencies
 3. **Clear triggers** - Description explains when to use
+4. **User-friendly** - Explain capabilities in natural language, not command syntax
 
 ## Skill Structure
 
 ```
 workspace/.claude/skills/skill-name/
-├── SKILL.md (required - metadata + docs)
-├── scripts/     (optional - executable code in any language)
-├── package.json (optional - npm dependencies)
-└── go.mod       (optional - Go dependencies)
+├── SKILL.md (required - metadata + brief docs)
+└── scripts/ (optional - executable code)
 ```
 
-## Workflow
+## Creating a Skill
 
-### 1. Understand Requirements
+### 1. Ask User Requirements
 
-Ask user:
 - What should this skill do?
 - When should it trigger?
-- What language/tools needed?
-- Examples of usage?
 
-### 2. Create in Template Directory
+### 2. Write SKILL.md
 
-Find myclaw project root, then:
-
-```bash
-cd workspace/.claude/skills
-mkdir -p skill-name/scripts
-cd skill-name
-```
-
-### 3. Write SKILL.md
-
-**Frontmatter** (YAML - triggers skill):
-
+**Frontmatter** (YAML):
 ```yaml
 ---
 name: skill-name
-description: WHAT it does and WHEN to use it. Be specific - this is the ONLY thing agent reads to decide activation. Include triggers, use cases, contexts.
-allowed-tools:
-  - Bash  # or Python, Node, Go, etc.
+description: WHAT it does and WHEN to use it. Be specific.
 ---
 ```
 
-**Body** (Markdown - loaded after activation):
-
+**Body** (Keep brief):
 ```markdown
 # Skill Name
 
-Brief overview.
+What this skill does (1-2 sentences).
 
-## Setup
+## Capabilities (User-facing - natural language)
 
-Dependencies with ABSOLUTE paths (use ~/.myclaw/workspace/.claude/skills/skill-name):
+- Capability 1 in plain language
+- Capability 2 in plain language
+- Capability 3 in plain language
 
-\`\`\`bash
-# Node.js
-npm install --prefix ~/.myclaw/workspace/.claude/skills/skill-name package-name
+## Implementation (Agent-only - technical details)
 
-# Python
-pip install -r ~/.myclaw/workspace/.claude/skills/skill-name/requirements.txt
+Internal commands, paths, or implementation notes that agent needs but users don't.
 
-# Go
-cd ~/.myclaw/workspace/.claude/skills/skill-name && go build -o bin/tool ./scripts/main.go
-\`\`\`
+## Notes
 
-## Usage
-
-All scripts with full paths:
-
-\`\`\`bash
-# Node.js
-node ~/.myclaw/workspace/.claude/skills/skill-name/scripts/run.cjs <args>
-
-# Python
-python3 ~/.myclaw/workspace/.claude/skills/skill-name/scripts/run.py <args>
-
-# Go binary
-~/.myclaw/workspace/.claude/skills/skill-name/bin/tool <args>
-
-# Bash
-bash ~/.myclaw/workspace/.claude/skills/skill-name/scripts/run.sh <args>
-\`\`\`
-
-## Scripts
-
-- `scripts/run.*` - Main entry point
-- `scripts/helper.*` - Helper functions
-
-## Key Points
-
-- Important notes
-- Error handling
-- Limitations
+Any important limitations or requirements.
 ```
 
-### 4. Create Scripts
+**User-Facing Language:**
+- ✅ Good: "I can manage your tasks and reminders"
+- ❌ Bad: "`todo list`, `todo add`, `todo complete`"
+- ❌ Bad: "`~/.myclaw/workspace/.claude/skills/todo/bin/todo`"
 
-**Node.js** (`scripts/run.cjs`):
+**Document Structure:**
+- **Capabilities section** - For users, use natural language
+- **Implementation section** - For agent, technical details and commands
+- Users ask naturally, agent reads Implementation to know how to execute
 
-```javascript
-#!/usr/bin/env node
-console.log(JSON.stringify({ result: 'success' }));
-```
+### 3. Create Scripts (if needed)
 
-**Python** (`scripts/run.py`):
-
-```python
-#!/usr/bin/env python3
-import json
-print(json.dumps({'result': 'success'}))
-```
-
-**Go** (`scripts/main.go`):
-
-```go
-package main
-import ("encoding/json"; "fmt")
-func main() {
-    fmt.Println(`{"result":"success"}`)
-}
-```
-
-**Bash** (`scripts/run.sh`):
-
-```bash
-#!/bin/bash
-echo '{"result":"success"}'
-```
+Use absolute paths for reliability:
+- `~/.myclaw/workspace/.claude/skills/skill-name/scripts/script.sh`
 
 Make executable: `chmod +x scripts/*`
 
-### 5. Test Locally
-
-Test in template directory:
+### 4. Test & Install
 
 ```bash
-# From myclaw project root
-cd workspace/.claude/skills/skill-name
+# Test in workspace/.claude/skills/skill-name
+bash scripts/script.sh
 
-# Test based on language
-node scripts/run.cjs
-# or
-python3 scripts/run.py
-# or
-go run scripts/main.go
-# or
-bash scripts/run.sh
-```
-
-### 6. Install
-
-Skills in `workspace/.claude/skills/` are templates. Install to make available:
-
-```bash
-# From myclaw project root
+# Install from myclaw root
 ./myclaw skills install skill-name
 ```
 
-Agent detects it on next run. **No restart needed!**
+## Tools
 
-## Path Convention
+- **Write** - Create new files
+- **Edit** - Modify existing files
+- **Read** - Read file contents
+- **Grep** - Search in files
+- **Glob** - Find files by pattern
+- **Bash** - Execute commands, test scripts
+- **Task** - Manage long-running tasks
+- **NEVER** use `echo >` or `cat >` - bypass permissions
 
-❌ **Wrong**: `~/.claude/skills/my-skill/`  
-✅ **Correct**: `~/.myclaw/workspace/.claude/skills/my-skill/`
+## Error Handling
 
-Always use `~/.myclaw/workspace/.claude/skills/` prefix in docs.
-
-## Behavior Rules
-
-When skill tools fail repeatedly (2-3 times):
-
-1. **STOP** - Don't auto-switch to other methods
-2. **Ask User** - Use `AskUserQuestion` to present options
-3. **Explain** - What failed and why
-4. **Never Assume** - Always get confirmation to switch approaches
-
-**Example**: Browser nav fails 3x:
-```
-浏览器工具无法访问该页面（失败3次）。
-可能原因：需要登录 / 反爬虫 / 网络问题
-
-是否改用 WebSearch？
-```
+If skill tools fail 2-3 times:
+1. STOP - don't auto-switch methods
+2. Ask user via `AskUserQuestion`
+3. Explain what failed and why
 
 ## Commands
 
 ```bash
-# List installed
-./myclaw skills list
-
-# Install (skip existing)
-./myclaw skills install skill-name
-
-# Update (overwrite)
-./myclaw skills update skill-name
-
-# Remove
-./myclaw skills uninstall skill-name
-
-# Verify
-./myclaw skills verify
+./myclaw skills list           # List installed
+./myclaw skills install <name> # Install skill
+./myclaw skills update <name>  # Update skill
 ```
-
-## Example
-
-See `browser` skill for complete CDP automation example with Node.js scripts and npm dependencies.
-
-
-

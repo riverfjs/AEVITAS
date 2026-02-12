@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -287,32 +286,23 @@ func (t *TelegramChannel) Send(msg bus.OutboundMessage) error {
 		return fmt.Errorf("invalid chat id %q: %w", msg.ChatID, err)
 	}
 
-	// Check if content contains image paths (detect screenshot paths)
-	if imagePath := extractImagePath(msg.Content); imagePath != "" {
-		// Send image first
-		if err := t.sendPhoto(chatID, imagePath); err != nil {
-			t.logger.Warnf("failed to send photo, falling back to text: %v", err)
-			// Continue to send text message as fallback
+	// Send media files first (if any)
+	for _, mediaPath := range msg.Media {
+		if err := t.sendMediaFile(chatID, mediaPath); err != nil {
+			t.logger.Warnf("failed to send media file %s: %v", mediaPath, err)
+			// Continue with other files
 		}
-		// Remove image path from content
-		msg.Content = strings.ReplaceAll(msg.Content, imagePath, "")
 	}
 
-	return t.sendNewMessage(chatID, msg.Content)
-}
-
-// extractImagePath extracts image file path from content
-func extractImagePath(content string) string {
-	// Match screenshot paths like /var/folders/.../screenshot-*.png
-	re := regexp.MustCompile(`(/[^\s]+/screenshot-[0-9]+\.png)`)
-	matches := re.FindStringSubmatch(content)
-	if len(matches) > 1 {
-		return matches[1]
+	// Send text content if present
+	if msg.Content != "" {
+		return t.sendNewMessage(chatID, msg.Content)
 	}
-	return ""
+
+	return nil
 }
 
-// sendPhoto sends a photo to Telegram
+// sendPhoto sends a photo to Telegram (kept for backward compatibility)
 func (t *TelegramChannel) sendPhoto(chatID int64, imagePath string) error {
 	// Check if file exists
 	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
@@ -326,6 +316,40 @@ func (t *TelegramChannel) sendPhoto(chatID int64, imagePath string) error {
 	}
 	
 	t.logger.Infof("sent photo to telegram chat_id=%d path=%s", chatID, imagePath)
+	return nil
+}
+
+// sendMediaFile sends a file (document, image, etc.) to Telegram
+func (t *TelegramChannel) sendMediaFile(chatID int64, filePath string) error {
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return fmt.Errorf("media file not found: %s", filePath)
+	}
+
+	// Detect if it's an image or document
+	ext := strings.ToLower(filepath.Ext(filePath))
+	isImage := ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp"
+
+	if isImage {
+		// Send as photo
+		photo := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(filePath))
+		photo.Caption = filepath.Base(filePath)
+		_, err := t.bot.Send(photo)
+		if err != nil {
+			return fmt.Errorf("send telegram photo: %w", err)
+		}
+		t.logger.Infof("sent photo to telegram chat_id=%d path=%s", chatID, filePath)
+	} else {
+		// Send as document (for log files, etc.)
+		doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
+		doc.Caption = filepath.Base(filePath)
+		_, err := t.bot.Send(doc)
+		if err != nil {
+			return fmt.Errorf("send telegram document: %w", err)
+		}
+		t.logger.Infof("sent document to telegram chat_id=%d path=%s", chatID, filePath)
+	}
+
 	return nil
 }
 

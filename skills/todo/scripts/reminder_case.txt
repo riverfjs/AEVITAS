@@ -1,0 +1,15 @@
+	case "reminders":
+		dueTasks := todoList.CheckReminders()
+		if len(dueTasks) == 0 {
+			fmt.Println("No overdue tasks.")
+			return
+		}
+		
+		fmt.Println("Overdue tasks:")
+		for _, task := range dueTasks {
+			fmt.Printf("%d. %s (Due: %s)\n", 
+				task.ID, 
+				task.Description, 
+				task.DueDate.Format("2006-01-02"))
+		}
+		

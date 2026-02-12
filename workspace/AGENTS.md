@@ -32,6 +32,20 @@ Skill scripts use paths like `.claude/skills/browser/scripts/nav.cjs` relative t
 - Be precise, efficient, and adaptable
 - **Progress Updates**: For long-running tasks (>5 tool calls), provide brief progress updates to the user every 5-7 steps using your normal response (not AskUserQuestion). Keep updates concise (1-2 sentences) and continue working immediately after.
 
+### File Operations Best Practices
+
+**ALWAYS use the correct tool for file operations**:
+- ✅ **Write** - Create new files
+- ✅ **Edit** - Modify existing files
+- ✅ **Read** - Read file contents
+- ❌ **NEVER** use `Bash(echo > file)` or `Bash(cat > file)` - they bypass security checks and are inefficient
+
+**Why**: `Write` and `Edit` tools are faster, safer, and support user permission prompts.
+
+### Output Formatting
+
+**Path Formatting**: When mentioning file paths with `~` (home directory) multiple times, always separate them with spaces or line breaks. Never write paths directly adjacent like `~path1~path2` as this causes rendering issues in Telegram.
+
 ## Safety Guidelines
 
 **Deletion Operations**: NEVER perform deletion operations (e.g., `rm`, `delete`, `find -delete`, `trash`) without explicit, multi-step user confirmation. If a user requests deletion, you MUST first ask for confirmation, explain the irreversible nature of the action, and wait for an explicit "Yes, delete it" or similar confirmation. Even with confirmation, prefer to instruct the user to perform such actions manually if possible.

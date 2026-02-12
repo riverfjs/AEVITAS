@@ -5,10 +5,11 @@ go 1.24.0
 require (
 	github.com/cexll/agentsdk-go v0.8.3
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	github.com/riverfjs/telegramify-go v0.1.1
+	github.com/riverfjs/telegramify-go v0.1.4
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	go.uber.org/zap v1.27.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (

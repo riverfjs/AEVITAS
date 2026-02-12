@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/cexll/agentsdk-go/pkg/api"
 	"github.com/cexll/agentsdk-go/pkg/core/events"
@@ -47,7 +48,7 @@ func (r *runtimeAdapter) Close() {
 }
 
 // RuntimeFactory creates a Runtime instance
-type RuntimeFactory func(cfg *config.Config, sysPrompt string) (Runtime, error)
+type RuntimeFactory func(cfg *config.Config, sysPrompt string, realtimeCallback func(api.RealtimeEvent)) (Runtime, error)
 
 // Options for creating a Gateway
 type Options struct {
@@ -56,7 +57,7 @@ type Options struct {
 }
 
 // DefaultRuntimeFactory creates the default agentsdk-go runtime
-func DefaultRuntimeFactory(cfg *config.Config, sysPrompt string) (Runtime, error) {
+func DefaultRuntimeFactory(cfg *config.Config, sysPrompt string, realtimeCallback func(api.RealtimeEvent)) (Runtime, error) {
 	// 初始化 logger - 默认启用 debug 日志
 	debug := true // 始终启用详细日志
 	zapLogger, err := logger.InitLogger(cfg.Agent.Workspace, debug)
@@ -84,11 +85,12 @@ func DefaultRuntimeFactory(cfg *config.Config, sysPrompt string) (Runtime, error
 	}
 
 	rt, err := api.New(context.Background(), api.Options{
-		ProjectRoot:   cfg.Agent.Workspace,
-		ModelFactory:  provider,
-		SystemPrompt:  sysPrompt,
-		MaxIterations: cfg.Agent.MaxToolIterations,
-		Logger:        sdkLog,
+		ProjectRoot:           cfg.Agent.Workspace,
+		ModelFactory:          provider,
+		SystemPrompt:          sysPrompt,
+		MaxIterations:         cfg.Agent.MaxToolIterations,
+		Logger:                sdkLog,
+		RealtimeEventCallback: realtimeCallback,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create runtime: %w", err)
@@ -108,6 +110,10 @@ type Gateway struct {
 	cmdHandler    *channel.CommandHandler
 	signalChan    chan os.Signal // for testing
 	logger        sdklogger.Logger
+	
+	// Current execution context (for realtime callbacks)
+	currentChannelID string
+	currentChatID    string
 }
 
 // New creates a Gateway with default options
@@ -138,13 +144,56 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 	// Build system prompt
 	sysPrompt := g.buildSystemPrompt()
 
+	// Create real-time event callback
+	realtimeCallback := func(event api.RealtimeEvent) {
+		// Send real-time events to the current inbound message's chat
+		// This will be called during agent execution (synchronously)
+		g.logger.Infof("[gateway] Realtime event: type=%s, count=%d, tool=%s", event.Type, event.Count, event.LastTool)
+		
+		// If we have current context, send progress update
+		if g.currentChannelID != "" && g.currentChatID != "" {
+			var msg string
+			switch event.Type {
+			case "progress_update":
+				// Format detailed progress with recent tool calls
+				msg = fmt.Sprintf("⏳ 执行中... (已完成 %d 个工具)\n\n", event.Count)
+				if len(event.RecentCalls) > 0 {
+					msg += "最近操作:\n"
+					for i, call := range event.RecentCalls {
+						// Truncate params for display
+						params := call.Params
+						if len(params) > 50 {
+							params = params[:50] + "..."
+						}
+						msg += fmt.Sprintf("%d. %s\n", i+1, call.Name)
+						if params != "" && params != "{}" {
+							msg += fmt.Sprintf("   参数: %s\n", params)
+						}
+					}
+				}
+			case "error_guard":
+				msg = fmt.Sprintf("⚠️ 检测到多次错误，正在调整策略... (错误次数: %d)", event.Count)
+			default:
+				return // Unknown event type
+			}
+			
+			// Send via bus Outbound channel
+			g.bus.Outbound <- bus.OutboundMessage{
+				Channel: g.currentChannelID,
+				ChatID:  g.currentChatID,
+				Content: msg,
+			}
+			g.logger.Debugf("[gateway] Sent realtime event message to %s/%s", g.currentChannelID, g.currentChatID)
+		}
+	}
+
 	// Create runtime using factory (allows injection for testing)
 	factory := opts.RuntimeFactory
 	if factory == nil {
 		factory = DefaultRuntimeFactory
 	}
 	g.runtimeFactory = factory // Save factory for restart
-	rt, err := factory(cfg, sysPrompt)
+	rt, err := factory(cfg, sysPrompt, realtimeCallback)
 	if err != nil {
 		return nil, err
 	}
@@ -244,6 +293,10 @@ func (g *Gateway) start(ctx context.Context) error {
 	go g.processLoop(ctx)
 
 	g.logger.Infof("[gateway] running on %s:%d", g.cfg.Gateway.Host, g.cfg.Gateway.Port)
+	
+	// Send startup notification
+	g.sendStartupNotification()
+	
 	return nil
 }
 
@@ -279,11 +332,18 @@ func (g *Gateway) processLoop(ctx context.Context) {
 			cmdResult := g.cmdHandler.HandleCommand(msg)
 			if cmdResult.Handled {
 				g.logger.Infof("[gateway] command handled: %s", truncate(msg.Content, 40))
-				if cmdResult.Response != "" {
+				
+				// Stop typing indicator for commands
+				if stopTyping, ok := msg.Metadata["stop_typing"].(chan struct{}); ok {
+					close(stopTyping)
+				}
+				
+				if cmdResult.Response != "" || len(cmdResult.Files) > 0 {
 					g.bus.Outbound <- bus.OutboundMessage{
 						Channel: msg.Channel,
 						ChatID:  msg.ChatID,
 						Content: cmdResult.Response,
+						Media:   cmdResult.Files,
 					}
 				}
 				continue
@@ -298,6 +358,14 @@ func (g *Gateway) processLoop(ctx context.Context) {
 }
 
 func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
+	// Set current execution context for realtime callbacks
+	g.currentChannelID = msg.Channel
+	g.currentChatID = msg.ChatID
+	defer func() {
+		g.currentChannelID = ""
+		g.currentChatID = ""
+	}()
+	
 	// Stop typing indicator when processing completes (deferred)
 	if stopTyping, ok := msg.Metadata["stop_typing"].(chan struct{}); ok {
 		defer close(stopTyping)
@@ -360,12 +428,26 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 	// 2. Skill results
 	for _, skillRes := range resp.SkillResults {
 		if output, ok := skillRes.Result.Output.(string); ok && output != "" {
-			content.WriteString(output)
-			content.WriteString("\n\n")
+		content.WriteString(output)
+		content.WriteString("\n\n")
+	}
+}
+
+	// 3. Check for SendFile tool results (agent wants to send files)
+	sendFileResults := g.extractSendFileResults(resp)
+	if len(sendFileResults) > 0 {
+		// Send files immediately
+		for _, filePath := range sendFileResults {
+			g.logger.Infof("[gateway] SendFile detected: %s", filePath)
+			g.bus.Outbound <- bus.OutboundMessage{
+				Channel: msg.Channel,
+				ChatID:  msg.ChatID,
+				Media:   []string{filePath},
+			}
 		}
 	}
 	
-	// 3. AskUserQuestion（通过 HookEvents）
+	// 4. AskUserQuestion（通过 HookEvents）
 	if question := g.extractAskUserQuestion(resp); question != "" {
 		g.logger.Infof("[gateway] AskUserQuestion: %s", truncate(question, 60))
 		g.bus.Outbound <- bus.OutboundMessage{
@@ -391,15 +473,7 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 	
 	result := strings.TrimSpace(content.String())
 	
-	// 6. Append attachments from SDK (like AskUserQuestion, just send what SDK returns)
-	if len(resp.Attachments) > 0 {
-		for _, att := range resp.Attachments {
-			result += "\n" + att.Path
-		}
-		g.logger.Debugf("[gateway] Appended %d attachment(s)", len(resp.Attachments))
-	}
-	
-	result = strings.TrimSpace(result)
+	// Send message (without auto-extracting attachments)
 	if result != "" {
 		g.logger.Infof("[gateway] outbound to %s/%s: %s", msg.Channel, msg.ChatID, truncate(result, 80))
 		g.bus.Outbound <- bus.OutboundMessage{
@@ -407,9 +481,42 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 			ChatID:  msg.ChatID,
 			Content: result,
 		}
-	} else {
+	} else if len(sendFileResults) == 0 { // Only warn if no files were sent
 		g.logger.Warnf("[gateway] no response generated for %s/%s", msg.Channel, msg.SenderID)
 	}
+}
+
+// extractSendFileResults extracts file paths from SendFile tool results
+func (g *Gateway) extractSendFileResults(resp *api.Response) []string {
+	if resp == nil {
+		return nil
+	}
+	
+	var files []string
+	// Extract from FileAttachment events created by SDK
+	for _, event := range resp.HookEvents {
+		if event.Type != events.FileAttachment {
+			continue
+		}
+		
+		payload, ok := event.Payload.(events.FileAttachmentPayload)
+		if !ok {
+			continue
+		}
+		
+		g.logger.Debugf("[gateway] Found FileAttachment event, path: %s, tool: %s", payload.FilePath, payload.ToolName)
+		
+		// Only extract files from SendFile tool
+		if payload.ToolName == "SendFile" && payload.FilePath != "" {
+			files = append(files, payload.FilePath)
+			g.logger.Debugf("[gateway] Extracted file from SendFile: %s", payload.FilePath)
+		}
+	}
+	
+	if len(files) > 0 {
+		g.logger.Infof("[gateway] Extracted %d file(s) from SendFile tool", len(files))
+	}
+	return files
 }
 
 // extractAskUserQuestion extracts formatted question from AskUserQuestion tool execution
@@ -460,6 +567,46 @@ func (g *Gateway) Shutdown() error {
 	}
 	g.logger.Infof("[gateway] shutdown complete")
 	return nil
+}
+
+// sendStartupNotification sends a startup message to the user who triggered restart
+func (g *Gateway) sendStartupNotification() {
+	// Check if there's a restart trigger file
+	restartTriggerFile := filepath.Join(os.Getenv("HOME"), ".myclaw", "restart_trigger.txt")
+	data, err := os.ReadFile(restartTriggerFile)
+	if err != nil {
+		// No trigger file, skip notification
+		g.logger.Debug("[gateway] no restart trigger file found, skipping startup notification")
+		return
+	}
+	
+	// Parse channel:chatID format
+	parts := strings.Split(strings.TrimSpace(string(data)), ":")
+	if len(parts) != 2 {
+		g.logger.Warnf("[gateway] invalid restart trigger format: %s", string(data))
+		return
+	}
+	
+	channelName := parts[0]
+	chatID := parts[1]
+	
+	// Get PID for status
+	pid := os.Getpid()
+	
+	startupMsg := fmt.Sprintf("✅ **Gateway Restarted Successfully**\n\nPID: %d\nTime: %s",
+		pid, time.Now().Format("2006-01-02 15:04:05"))
+	
+	g.logger.Infof("[gateway] sending restart notification to %s/%s", channelName, chatID)
+	
+	// Send notification
+	g.bus.Outbound <- bus.OutboundMessage{
+		Channel: channelName,
+		ChatID:  chatID,
+		Content: startupMsg,
+	}
+	
+	// Clean up trigger file
+	os.Remove(restartTriggerFile)
 }
 
 func truncate(s string, n int) string {

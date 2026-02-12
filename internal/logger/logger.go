@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // InitLogger 初始化日志系统
@@ -35,25 +36,35 @@ func InitLogger(workspace string, debug bool) (*zap.Logger, error) {
 	// 短路径格式：文件名:行号（而不是完整路径）
 	encoderConfig.EncodeCaller = zapcore.ShortCallerEncoder
 
-	// 文件输出配置
-	fileEncoder := zapcore.NewJSONEncoder(encoderConfig)
-	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		// 如果文件打开失败，只使用控制台输出
-		fmt.Fprintf(os.Stderr, "Warning: failed to open log file: %v, using console only\n", err)
-		consoleEncoder := zapcore.NewConsoleEncoder(encoderConfig)
-		core := zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stdout), level)
-		return zap.New(core, zap.AddCaller()), nil
+	// 使用 lumberjack 实现日志轮转
+	// 按天分割（每天 00:00 自动轮转）+ 按大小轮转（单文件最大 100MB）
+	logRotator := &lumberjack.Logger{
+		Filename:   logFilePath,
+		MaxSize:    100,   // MB，单文件最大大小
+		MaxBackups: 30,    // 保留最近 30 个备份文件
+		MaxAge:     30,    // 保留最近 30 天的日志
+		LocalTime:  true,  // 使用本地时间
+		Compress:   false, // 不压缩（方便直接查看）
 	}
 
-	// 控制台输出配置
-	consoleEncoder := zapcore.NewConsoleEncoder(encoderConfig)
-
-	// 创建多重输出core
-	core := zapcore.NewTee(
-		zapcore.NewCore(fileEncoder, zapcore.AddSync(logFile), level),
-		zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stdout), level),
-	)
+	// 文件输出配置
+	fileEncoder := zapcore.NewJSONEncoder(encoderConfig)
+	
+	// 检查是否为后台运行模式（通过环境变量）
+	isDaemon := os.Getenv("MYCLAW_DAEMON") == "1"
+	
+	var core zapcore.Core
+	if isDaemon {
+		// 后台模式：只输出到文件，避免与 nohup 重复
+		core = zapcore.NewCore(fileEncoder, zapcore.AddSync(logRotator), level)
+	} else {
+		// 前台模式：同时输出到文件和控制台
+		consoleEncoder := zapcore.NewConsoleEncoder(encoderConfig)
+		core = zapcore.NewTee(
+			zapcore.NewCore(fileEncoder, zapcore.AddSync(logRotator), level),
+			zapcore.NewCore(consoleEncoder, zapcore.AddSync(os.Stdout), level),
+		)
+	}
 
 	return zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel)), nil
 }

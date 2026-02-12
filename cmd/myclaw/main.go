@@ -79,14 +79,11 @@ func DefaultRuntimeFactory(cfg *config.Config) (Runtime, error) {
 	}
 
 	rt, err := api.New(context.Background(), api.Options{
-		ProjectRoot:         cfg.Agent.Workspace,
-		ModelFactory:        provider,
-		SystemPrompt:        sysPrompt,
-		MaxIterations:       cfg.Agent.MaxToolIterations,
-		Logger:              sdklogger.NewZapLogger(log),
-		ErrorGuardEnabled:   cfg.Agent.ErrorGuard.Enabled,
-		ErrorGuardThreshold: cfg.Agent.ErrorGuard.Threshold,
-		ErrorGuardMarkers:   cfg.Agent.ErrorGuard.Markers,
+		ProjectRoot:   cfg.Agent.Workspace,
+		ModelFactory:  provider,
+		SystemPrompt:  sysPrompt,
+		MaxIterations: cfg.Agent.MaxToolIterations,
+		Logger:        sdklogger.NewZapLogger(log),
 		// CRITICAL: Security settings - DO NOT REMOVE
 		// These protect against dangerous commands like rm -rf
 		// The SDK's security.Validator blocks dangerous operations by default
