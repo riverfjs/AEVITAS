@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cexll/agentsdk-go/pkg/api"
+	"github.com/riverfjs/agentsdk-go/pkg/api"
 	"github.com/spf13/cobra"
 	"github.com/stellarlinkco/myclaw/internal/config"
 )

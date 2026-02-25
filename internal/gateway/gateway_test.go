@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cexll/agentsdk-go/pkg/api"
-	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
+	"github.com/riverfjs/agentsdk-go/pkg/api"
+	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 	"go.uber.org/zap"
 	"github.com/stellarlinkco/myclaw/internal/bus"
 	"github.com/stellarlinkco/myclaw/internal/channel"

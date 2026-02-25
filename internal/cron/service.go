@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
+	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 	rcron "github.com/robfig/cron/v3"
 )
 

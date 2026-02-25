@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cexll/agentsdk-go/pkg/api"
-	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
-	"github.com/cexll/agentsdk-go/pkg/model"
+	"github.com/riverfjs/agentsdk-go/pkg/api"
+	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
+	"github.com/riverfjs/agentsdk-go/pkg/model"
 	"github.com/spf13/cobra"
 	"github.com/stellarlinkco/myclaw/internal/config"
 	"github.com/stellarlinkco/myclaw/internal/gateway"

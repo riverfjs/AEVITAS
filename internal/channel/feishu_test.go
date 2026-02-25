@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
+	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 	"time"
 
 	"github.com/stellarlinkco/myclaw/internal/bus"

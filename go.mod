@@ -3,10 +3,10 @@ module github.com/stellarlinkco/myclaw
 go 1.24.0
 
 require (
-	github.com/cexll/agentsdk-go v0.8.3
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/lestrrat-go/file-rotatelogs v2.4.0+incompatible
+	github.com/riverfjs/agentsdk-go v0.1.0
 	github.com/riverfjs/telegramify-go v0.1.6
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
@@ -56,6 +56,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// Use local modified version of agentsdk-go with ClearSession support
-replace github.com/cexll/agentsdk-go => ./pkg/agentsdk-go

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
+	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 )
 
 const dedupWindow = 24 * time.Hour
