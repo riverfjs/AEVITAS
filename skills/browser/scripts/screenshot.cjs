@@ -11,7 +11,10 @@ const selector = selectorArg ? selectorArg.split('=')[1] : null;
 async function screenshot() {
   try {
     const page = await getActivePage();
-    
+
+    // Ensure consistent viewport and HiDPI scale for sharp screenshots
+    await page.setViewportSize({ width: 1440, height: 900 });
+
     await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => {});
 
     const filename = `screenshot-${Date.now()}.png`;

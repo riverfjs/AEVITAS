@@ -1,0 +1,11 @@
+[{
+  "id": "flight-1771938526-5116",
+  "from": "深圳",
+  "to": "重庆",
+  "depart": "2026-04-03",
+  "return": "2026-04-07",
+  "created": "2026-02-24T13:08:46Z",
+  "enabled": true,
+  "lastCheck": null,
+  "lastPrice": null
+}]

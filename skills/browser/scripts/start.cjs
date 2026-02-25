@@ -60,6 +60,8 @@ async function startChrome() {
     '--no-first-run',
     '--no-default-browser-check',
     '--headless=new',
+    '--window-size=1440,900',
+    '--force-device-scale-factor=2',
     // Anti-bot detection
     '--disable-blink-features=AutomationControlled',
     '--disable-dev-shm-usage',
