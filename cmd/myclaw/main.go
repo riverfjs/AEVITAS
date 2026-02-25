@@ -17,7 +17,6 @@ import (
 	"github.com/stellarlinkco/myclaw/internal/config"
 	"github.com/stellarlinkco/myclaw/internal/gateway"
 	"github.com/stellarlinkco/myclaw/internal/logger"
-	"github.com/stellarlinkco/myclaw/internal/memory"
 	"github.com/stellarlinkco/myclaw/pkg/utils"
 )
 
@@ -57,8 +56,7 @@ func DefaultRuntimeFactory(cfg *config.Config) (Runtime, error) {
 	}
 	defer log.Sync()
 
-	mem := memory.NewMemoryStore(cfg.Agent.Workspace)
-	sysPrompt := buildSystemPrompt(cfg, mem)
+	sysPrompt := buildSystemPrompt(cfg)
 
 	var provider api.ModelFactory
 	switch cfg.Provider.Type {
@@ -83,11 +81,13 @@ func DefaultRuntimeFactory(cfg *config.Config) (Runtime, error) {
 		ModelFactory:  provider,
 		SystemPrompt:  sysPrompt,
 		MaxIterations: cfg.Agent.MaxToolIterations,
+		HistoryLimit:  cfg.Agent.HistoryLimit,
 		Logger:        sdklogger.NewZapLogger(log),
-		// CRITICAL: Security settings - DO NOT REMOVE
-		// These protect against dangerous commands like rm -rf
-		// The SDK's security.Validator blocks dangerous operations by default
-	})
+		AutoCompact: api.CompactConfig{
+			Enabled:   cfg.Agent.Compaction.Enabled,
+			Threshold: cfg.Agent.Compaction.Threshold,
+		},
+			})
 	if err != nil {
 		return nil, fmt.Errorf("create runtime: %w", err)
 	}
@@ -321,7 +321,7 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	writeIfNotExists(filepath.Join(ws, "AGENTS.md"), defaultAgentsMD)
 	writeIfNotExists(filepath.Join(ws, "SOUL.md"), defaultSoulMD)
 	writeIfNotExists(filepath.Join(ws, ".claude", "settings.json"), defaultClaudeSettings)
-	writeIfNotExists(filepath.Join(ws, "memory", "MEMORY.md"), "")
+	writeIfNotExists(filepath.Join(ws, "MEMORY.md"), "")
 	writeIfNotExists(filepath.Join(ws, "HEARTBEAT.md"), "")
 	
 	// Copy built-in skills from embedded templates
@@ -364,10 +364,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(cfg.Agent.Workspace); err != nil {
 		fmt.Println("Workspace: not found (run 'myclaw onboard')")
 	} else {
-		mem := memory.NewMemoryStore(cfg.Agent.Workspace)
-		lt, _ := mem.ReadLongTerm()
-		if lt != "" {
-			fmt.Printf("Memory: %d bytes\n", len(lt))
+		// Check MEMORY.md at workspace root
+		memPath := filepath.Join(cfg.Agent.Workspace, "MEMORY.md")
+		if info, err := os.Stat(memPath); err == nil {
+			fmt.Printf("Memory: %d bytes\n", info.Size())
 		} else {
 			fmt.Println("Memory: empty")
 		}
@@ -383,7 +383,7 @@ func providerDisplay(t string) string {
 	return t
 }
 
-func buildSystemPrompt(cfg *config.Config, mem *memory.MemoryStore) string {
+func buildSystemPrompt(cfg *config.Config) string {
 	var sb strings.Builder
 
 	if data, err := os.ReadFile(filepath.Join(cfg.Agent.Workspace, "AGENTS.md")); err == nil {
@@ -394,10 +394,6 @@ func buildSystemPrompt(cfg *config.Config, mem *memory.MemoryStore) string {
 	if data, err := os.ReadFile(filepath.Join(cfg.Agent.Workspace, "SOUL.md")); err == nil {
 		sb.Write(data)
 		sb.WriteString("\n\n")
-	}
-
-	if memCtx := mem.GetMemoryContext(); memCtx != "" {
-		sb.WriteString(memCtx)
 	}
 
 	return sb.String()
@@ -421,8 +417,11 @@ Use them to help the user accomplish tasks.
 ## Guidelines
 - Be concise and helpful
 - Use tools proactively when needed
-- Remember information the user tells you by writing to memory
-- Check your memory context for previously stored information
+
+## Memory Recall
+Before answering anything about prior work, decisions, dates, people, preferences, or todos:
+run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines.
+To persist new information, use memory_write. If low confidence after search, say you checked.
 `
 
 const defaultSoulMD = `# Soul

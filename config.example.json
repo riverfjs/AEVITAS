@@ -5,10 +5,25 @@
     "maxTokens": 8192,
     "temperature": 0.7,
     "maxToolIterations": 100,
-    "errorGuard": {
+    "historyLimit": 30,
+    "autoRecall": true,
+    "toolLog": {
+      "enabled": false,
+      "interval": 5
+    },
+    "compaction": {
+      "enabled": false,
+      "threshold": 0.8
+    },
+    "contextWindow": {
+      "tokens": 0,
+      "warnRatio": 0.8,
+      "hardMinTokens": 2000
+    },
+    "memoryFlush": {
       "enabled": true,
-      "threshold": 2,
-      "markers": []
+      "reserveTokensFloor": 20000,
+      "softThresholdTokens": 4000
     }
   },
   "provider": {

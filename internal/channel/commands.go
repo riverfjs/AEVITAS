@@ -38,7 +38,7 @@ type CommandResult struct {
 	Files    []string // File paths to send (e.g., log files)
 }
 
-// HandleCommand processes special commands and returns whether it was handled
+// HandleCommand processes special commands and returns whether it was handled.
 func (h *CommandHandler) HandleCommand(msg bus.InboundMessage) CommandResult {
 	content := strings.TrimSpace(msg.Content)
 	
@@ -68,7 +68,7 @@ func (h *CommandHandler) HandleCommand(msg bus.InboundMessage) CommandResult {
 		}
 	case "/reset":
 		return CommandResult{
-			Handled: true,
+			Handled:  true,
 			Response: h.handleReset(msg.SessionKey()),
 		}
 	case "/restart":
@@ -168,12 +168,10 @@ func (h *CommandHandler) handleReset(sessionKey string) string {
 	if h.runtime == nil {
 		return "⚠️ Session reset is not available"
 	}
-
 	if err := h.runtime.ClearSession(sessionKey); err != nil {
 		return fmt.Sprintf("❌ Failed to reset session: %v", err)
 	}
-
-	return "✅ **Session Reset Successfully**\n\nLet's start fresh!"
+	return "✅ **Session Reset**\n\nLet's start fresh!"
 }
 
 

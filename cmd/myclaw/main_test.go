@@ -12,7 +12,6 @@ import (
 	"github.com/cexll/agentsdk-go/pkg/api"
 	"github.com/spf13/cobra"
 	"github.com/stellarlinkco/myclaw/internal/config"
-	"github.com/stellarlinkco/myclaw/internal/memory"
 )
 
 func TestWriteIfNotExists_NewFile(t *testing.T) {
@@ -62,34 +61,13 @@ func TestBuildSystemPrompt(t *testing.T) {
 		},
 	}
 
-	mem := memory.NewMemoryStore(tmpDir)
-
-	prompt := buildSystemPrompt(cfg, mem)
+	prompt := buildSystemPrompt(cfg)
 
 	if !strings.Contains(prompt, "# Agent") {
 		t.Error("missing AGENTS.md content")
 	}
 	if !strings.Contains(prompt, "# Soul") {
 		t.Error("missing SOUL.md content")
-	}
-}
-
-func TestBuildSystemPrompt_WithMemory(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg := &config.Config{
-		Agent: config.AgentConfig{
-			Workspace: tmpDir,
-		},
-	}
-
-	mem := memory.NewMemoryStore(tmpDir)
-	mem.WriteLongTerm("Important info")
-
-	prompt := buildSystemPrompt(cfg, mem)
-
-	if !strings.Contains(prompt, "Important info") {
-		t.Error("missing memory content")
 	}
 }
 
@@ -102,9 +80,7 @@ func TestBuildSystemPrompt_NoFiles(t *testing.T) {
 		},
 	}
 
-	mem := memory.NewMemoryStore(tmpDir)
-
-	prompt := buildSystemPrompt(cfg, mem)
+	prompt := buildSystemPrompt(cfg)
 
 	if prompt != "" {
 		t.Errorf("expected empty prompt, got %q", prompt)

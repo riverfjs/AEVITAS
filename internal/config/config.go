@@ -27,18 +27,77 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	Workspace         string  `json:"workspace"`
-	Model             string  `json:"model"`
-	MaxTokens         int     `json:"maxTokens"`
-	Temperature       float64 `json:"temperature"`
-	MaxToolIterations int     `json:"maxToolIterations"`
-	ErrorGuard        ErrorGuardConfig `json:"errorGuard,omitempty"`
+	Workspace         string        `json:"workspace"`
+	Model             string        `json:"model"`
+	MaxTokens         int           `json:"maxTokens"`
+	Temperature       float64       `json:"temperature"`
+	MaxToolIterations int           `json:"maxToolIterations"`
+	// HistoryLimit caps the number of user turns loaded from disk into each
+	// session context. 0 = no limit (all history). Default: 30.
+	HistoryLimit      int           `json:"historyLimit,omitempty"`
+	// ToolLog controls real-time progress log messages sent during agent execution.
+	ToolLog           ToolLogConfig `json:"toolLog,omitempty"`
+	// AutoRecall enables automatic memory injection before each agent turn.
+	// When true, MEMORY.md is searched with the user's prompt and top results
+	// are prepended to the message as context. Default: true.
+	AutoRecall           bool             `json:"autoRecall,omitempty"`
+	AutoRecallMaxResults int              `json:"autoRecallMaxResults,omitempty"`
+	// Compaction controls automatic context-window compaction.
+	Compaction CompactionConfig `json:"compaction,omitempty"`
+	// ContextWindow configures the Context Window Guard.
+	// When Tokens > 0, the SDK warns when the estimated history token count
+	// approaches the limit and rejects requests when too full.
+	ContextWindow ContextWindowConfig `json:"contextWindow,omitempty"`
+	// MemoryFlush controls automatic pre-compaction memory flush.
+	// When enabled, a hidden agent turn runs to write memories to disk when
+	// input tokens approach the context window limit.
+	MemoryFlush MemoryFlushConfig `json:"memoryFlush,omitempty"`
 }
 
-type ErrorGuardConfig struct {
-	Enabled   *bool    `json:"enabled,omitempty"`   // nil = enabled (default), false = disabled
-	Threshold int      `json:"threshold,omitempty"` // Consecutive errors before intervention (default: 2)
-	Markers   []string `json:"markers,omitempty"`   // Custom error detection patterns
+// ToolLogConfig controls periodic tool-call progress messages sent to the chat.
+type ToolLogConfig struct {
+	Enabled  bool `json:"enabled"`           // Whether to send progress messages (default: false)
+	Interval int  `json:"interval,omitempty"` // Send a message every N tool calls (default: 5)
+}
+
+// ContextWindowConfig configures the lightweight Context Window Guard.
+type ContextWindowConfig struct {
+	// Tokens is the total context window size in tokens. 0 = disabled.
+	// Set this to your model's context window (e.g. 200000 for Claude 3.5 Sonnet).
+	Tokens int `json:"tokens,omitempty"`
+	// WarnRatio is the usage fraction (0–1) that triggers a warning message.
+	// Default: 0.8 (warn when estimated usage exceeds 80% of Tokens).
+	WarnRatio float64 `json:"warnRatio,omitempty"`
+	// HardMinTokens is the minimum estimated remaining tokens below which the
+	// request is rejected with a message advising /reset. Default: 2000.
+	HardMinTokens int `json:"hardMinTokens,omitempty"`
+}
+
+// MemoryFlushConfig controls automatic memory flush before context window exhaustion.
+// Flush fires when inputTokens >= ContextWindow.Tokens - ReserveTokensFloor - SoftThresholdTokens.
+type MemoryFlushConfig struct {
+	// Enabled turns memory flush on or off. Default: true.
+	Enabled bool `json:"enabled"`
+	// ReserveTokensFloor is tokens reserved for model output during the flush turn.
+	// Default: 20000 (same as openclaw). Separate from ContextWindow.HardMinTokens.
+	ReserveTokensFloor int `json:"reserveTokensFloor,omitempty"`
+	// SoftThresholdTokens is the additional early-trigger buffer. Default: 4000 (same as openclaw).
+	// With 200k context and defaults, flush triggers at 176k tokens (88% usage).
+	SoftThresholdTokens int `json:"softThresholdTokens,omitempty"`
+	// Prompt is the synthetic user message for the flush turn. Uses default if empty.
+	Prompt string `json:"prompt,omitempty"`
+}
+
+// CompactionConfig controls automatic session history compaction.
+// When enabled, the SDK monitors token usage and summarises older messages
+// via LLM when usage exceeds Threshold * context-window, keeping the
+// conversation going indefinitely without hitting the model's context limit.
+type CompactionConfig struct {
+	// Enabled turns on automatic compaction. Default: false.
+	Enabled bool `json:"enabled"`
+	// Threshold is the fraction of the context window (0–1) at which compaction
+	// triggers. Default: 0.8 (80%).
+	Threshold float64 `json:"threshold,omitempty"`
 }
 
 type ProviderConfig struct {
@@ -99,6 +158,10 @@ func DefaultConfig() *Config {
 			MaxTokens:         DefaultMaxTokens,
 			Temperature:       DefaultTemperature,
 			MaxToolIterations: DefaultMaxToolIterations,
+			HistoryLimit:      30,
+			ToolLog:           ToolLogConfig{Enabled: false, Interval: 5},
+			AutoRecall:        true,
+			MemoryFlush: MemoryFlushConfig{Enabled: true, ReserveTokensFloor: 20000, SoftThresholdTokens: 4000},
 		},
 		Provider: ProviderConfig{},
 		Channels: ChannelsConfig{},

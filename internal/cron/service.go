@@ -193,6 +193,27 @@ func (s *Service) RemoveJob(id string) bool {
 	return false
 }
 
+// RunJob immediately executes the job with the given ID, regardless of schedule.
+func (s *Service) RunJob(id string) error {
+	s.mu.Lock()
+	var found *CronJob
+	for i := range s.jobs {
+		if s.jobs[i].ID == id {
+			copy := s.jobs[i]
+			found = &copy
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	if found == nil {
+		return fmt.Errorf("job %s not found", id)
+	}
+
+	go s.executeJob(*found)
+	return nil
+}
+
 func (s *Service) ListJobs() []CronJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()

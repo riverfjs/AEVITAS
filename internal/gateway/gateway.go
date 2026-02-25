@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -20,7 +21,7 @@ import (
 	"github.com/stellarlinkco/myclaw/internal/cron"
 	"github.com/stellarlinkco/myclaw/internal/heartbeat"
 	"github.com/stellarlinkco/myclaw/internal/logger"
-	"github.com/stellarlinkco/myclaw/internal/memory"
+	"github.com/stellarlinkco/myclaw/internal/rpc"
 )
 
 // Runtime interface for agent runtime (allows mocking in tests)
@@ -90,7 +91,24 @@ func DefaultRuntimeFactory(cfg *config.Config, sysPrompt string, realtimeCallbac
 		SystemPrompt:          sysPrompt,
 		MaxIterations:         cfg.Agent.MaxToolIterations,
 		Logger:                sdkLog,
+		HistoryLimit:          cfg.Agent.HistoryLimit,
 		RealtimeEventCallback: realtimeCallback,
+		ProgressInterval:      cfg.Agent.ToolLog.Interval,
+		AutoRecall:            cfg.Agent.AutoRecall,
+		AutoRecallMaxResults:  cfg.Agent.AutoRecallMaxResults,
+		AutoCompact: api.CompactConfig{
+			Enabled:   cfg.Agent.Compaction.Enabled,
+			Threshold: cfg.Agent.Compaction.Threshold,
+		},
+		ContextWindowTokens:        cfg.Agent.ContextWindow.Tokens,
+		ContextWindowWarnRatio:     cfg.Agent.ContextWindow.WarnRatio,
+		ContextWindowHardMinTokens: cfg.Agent.ContextWindow.HardMinTokens,
+		MemoryFlush: api.MemoryFlushConfig{
+			Enabled:             cfg.Agent.MemoryFlush.Enabled,
+			ReserveTokensFloor:  cfg.Agent.MemoryFlush.ReserveTokensFloor,
+			SoftThresholdTokens: cfg.Agent.MemoryFlush.SoftThresholdTokens,
+			Prompt:              cfg.Agent.MemoryFlush.Prompt,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create runtime: %w", err)
@@ -99,18 +117,17 @@ func DefaultRuntimeFactory(cfg *config.Config, sysPrompt string, realtimeCallbac
 }
 
 type Gateway struct {
-	cfg           *config.Config
-	bus           *bus.MessageBus
-	runtime       Runtime
+	cfg            *config.Config
+	bus            *bus.MessageBus
+	runtime        Runtime
 	runtimeFactory RuntimeFactory // Factory to recreate runtime on restart
-	channels      *channel.ChannelManager
-	cron          *cron.Service
-	hb            *heartbeat.Service
-	mem           *memory.MemoryStore
-	cmdHandler    *channel.CommandHandler
-	signalChan    chan os.Signal // for testing
-	logger        sdklogger.Logger
-	
+	channels       *channel.ChannelManager
+	cron           *cron.Service
+	hb             *heartbeat.Service
+	cmdHandler     *channel.CommandHandler
+	signalChan     chan os.Signal // for testing
+	logger         sdklogger.Logger
+
 	// Current execution context (for realtime callbacks)
 	currentChannelID string
 	currentChatID    string
@@ -138,53 +155,49 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 	// Message bus
 	g.bus = bus.NewMessageBus(config.DefaultBufSize)
 
-	// Memory
-	g.mem = memory.NewMemoryStore(cfg.Agent.Workspace)
-
 	// Build system prompt
 	sysPrompt := g.buildSystemPrompt()
 
-	// Create real-time event callback
+	// Build real-time event callback.
+	// Progress updates require toolLog.enabled; context window warnings always fire.
 	realtimeCallback := func(event api.RealtimeEvent) {
-		// Send real-time events to the current inbound message's chat
-		// This will be called during agent execution (synchronously)
 		g.logger.Infof("[gateway] Realtime event: type=%s, count=%d, tool=%s", event.Type, event.Count, event.LastTool)
-		
-		// If we have current context, send progress update
-		if g.currentChannelID != "" && g.currentChatID != "" {
-			var msg string
-			switch event.Type {
-			case "progress_update":
-				// Format detailed progress with recent tool calls
-				msg = fmt.Sprintf("⏳ 执行中... (已完成 %d 个工具)\n\n", event.Count)
-				if len(event.RecentCalls) > 0 {
-					msg += "最近操作:\n"
-					for i, call := range event.RecentCalls {
-						// Truncate params for display
-						params := call.Params
-						if len(params) > 50 {
-							params = params[:50] + "..."
-						}
-						msg += fmt.Sprintf("%d. %s\n", i+1, call.Name)
-						if params != "" && params != "{}" {
-							msg += fmt.Sprintf("   参数: %s\n", params)
-						}
-					}
-				}
-			case "error_guard":
-				msg = fmt.Sprintf("⚠️ 检测到多次错误，正在调整策略... (错误次数: %d)", event.Count)
-			default:
-				return // Unknown event type
-			}
-			
-			// Send via bus Outbound channel
-			g.bus.Outbound <- bus.OutboundMessage{
-				Channel: g.currentChannelID,
-				ChatID:  g.currentChatID,
-				Content: msg,
-			}
-			g.logger.Debugf("[gateway] Sent realtime event message to %s/%s", g.currentChannelID, g.currentChatID)
+		if g.currentChannelID == "" || g.currentChatID == "" {
+			return
 		}
+
+		var msg string
+		switch event.Type {
+		case api.RealtimeEventContextWindowWarn:
+			// Always forward context window warnings — the user must know.
+			msg = event.Message
+
+		case api.RealtimeEventProgressUpdate:
+			// Only forward progress updates when toolLog is enabled.
+			if !cfg.Agent.ToolLog.Enabled {
+				return
+			}
+			msg = fmt.Sprintf("⏳ %s", event.LastTool)
+			if len(event.RecentCalls) > 0 {
+				params := event.RecentCalls[0].Params
+				if params != "" && params != "{}" {
+					msg += fmt.Sprintf(": %s", params)
+				}
+			}
+
+		default:
+			return
+		}
+
+		if msg == "" {
+			return
+		}
+		g.bus.Outbound <- bus.OutboundMessage{
+			Channel: g.currentChannelID,
+			ChatID:  g.currentChatID,
+			Content: msg,
+		}
+		g.logger.Debugf("[gateway] Sent %s event to %s/%s", event.Type, g.currentChannelID, g.currentChatID)
 	}
 
 	// Create runtime using factory (allows injection for testing)
@@ -202,33 +215,49 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 	// Signal channel for testing
 	g.signalChan = opts.SignalChan
 
-	// runAgent helper for cron/heartbeat
-	runAgent := func(prompt string) (string, error) {
-		resp, err := g.runtime.Run(context.Background(), api.Request{
-			Prompt:    prompt,
-			SessionID: "system",
-		})
-		if err != nil {
-			return "", err
-		}
-		if resp == nil || resp.Result == nil {
-			return "", nil
-		}
-		return resp.Result.Output, nil
-	}
-
 	// Cron
 	cronStorePath := filepath.Join(config.ConfigDir(), "data", "cron", "jobs.json")
 	g.cron = cron.NewService(cronStorePath, g.logger)
 	g.cron.OnJob = func(job cron.CronJob) (string, error) {
-		result, err := runAgent(job.Payload.Message)
-		if err != nil {
-			return "", err
+		var result string
+		var err error
+
+		sessionID := "system"
+		if job.SessionTarget == cron.SessionIsolated {
+			sessionID = fmt.Sprintf("cron-isolated-%s", job.ID)
 		}
-		if job.Payload.Deliver && job.Payload.Channel != "" {
+
+		switch job.Payload.Kind {
+		case "command":
+			// Direct exec: bypass agent entirely, stdout is the result
+			out, execErr := exec.Command("bash", "-c", job.Payload.Command).Output()
+			if execErr != nil {
+				result = fmt.Sprintf("command error: %v\n%s", execErr, string(out))
+			} else {
+				result = string(out)
+			}
+
+		case "systemEvent":
+			// Inject text as system event — no agent turn, result is the text itself
+			result = job.Payload.Text
+
+		default:
+			// "agentTurn" or legacy (empty kind with message field)
+			msg := job.Payload.Message
+			if msg == "" {
+				msg = job.Payload.Text
+			}
+			result, err = g.runAgent(context.Background(), msg, sessionID)
+			if err != nil {
+				return "", err
+			}
+		}
+
+		// Deliver result via Delivery config (new style)
+		if d := job.Delivery; d != nil && d.Mode == "announce" && d.Channel != "" {
 			g.bus.Outbound <- bus.OutboundMessage{
-				Channel: job.Payload.Channel,
-				ChatID:  job.Payload.To,
+				Channel: d.Channel,
+				ChatID:  d.To,
 				Content: result,
 			}
 		}
@@ -236,7 +265,9 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 	}
 
 	// Heartbeat
-	g.hb = heartbeat.New(cfg.Agent.Workspace, runAgent, 0, g.logger)
+	g.hb = heartbeat.New(cfg.Agent.Workspace, func(prompt string) (string, error) {
+		return g.runAgent(context.Background(), prompt, "system")
+	}, g.heartbeatNotify, 0, g.logger)
 
 	// Command handler
 	g.cmdHandler = channel.NewCommandHandler(g.runtime, cfg.Agent.Workspace)
@@ -251,6 +282,29 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 	return g, nil
 }
 
+// resetSession clears the session history for the given sessionID.
+func (g *Gateway) resetSession(sessionID string) error {
+	if err := g.runtime.ClearSession(sessionID); err != nil {
+		return fmt.Errorf("failed to clear session: %w", err)
+	}
+	return nil
+}
+
+// runAgent runs the agent with the given prompt and sessionID, returning the text output.
+func (g *Gateway) runAgent(ctx context.Context, prompt, sessionID string) (string, error) {
+	resp, err := g.runtime.Run(ctx, api.Request{
+		Prompt:    prompt,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		return "", err
+	}
+	if resp == nil || resp.Result == nil {
+		return "", nil
+	}
+	return resp.Result.Output, nil
+}
+
 func (g *Gateway) buildSystemPrompt() string {
 	var sb strings.Builder
 
@@ -262,10 +316,6 @@ func (g *Gateway) buildSystemPrompt() string {
 	if data, err := os.ReadFile(filepath.Join(g.cfg.Agent.Workspace, "SOUL.md")); err == nil {
 		sb.Write(data)
 		sb.WriteString("\n\n")
-	}
-
-	if memCtx := g.mem.GetMemoryContext(); memCtx != "" {
-		sb.WriteString(memCtx)
 	}
 
 	return sb.String()
@@ -292,8 +342,16 @@ func (g *Gateway) start(ctx context.Context) error {
 
 	go g.processLoop(ctx)
 
-	g.logger.Infof("[gateway] running on %s:%d", g.cfg.Gateway.Host, g.cfg.Gateway.Port)
-	
+	// Start WebSocket RPC server (same protocol as openclaw)
+	rpcAddr := fmt.Sprintf("%s:%d", g.cfg.Gateway.Host, g.cfg.Gateway.Port)
+	rpcSrv := rpc.NewServer(g.logger)
+	rpc.RegisterCronHandlers(rpcSrv, g.cron)
+	if err := rpcSrv.Start(ctx, rpcAddr); err != nil {
+		return fmt.Errorf("rpc server: %w", err)
+	}
+
+	g.logger.Infof("[gateway] running on ws://%s", rpcAddr)
+
 	// Send startup notification
 	g.sendStartupNotification()
 	
@@ -329,7 +387,10 @@ func (g *Gateway) processLoop(ctx context.Context) {
 			g.logger.Infof("[gateway] inbound from %s/%s: %s", msg.Channel, msg.SenderID, truncate(msg.Content, 80))
 
 			// Check if this is a special command
-			cmdResult := g.cmdHandler.HandleCommand(msg)
+			var cmdResult channel.CommandResult
+			if g.cmdHandler != nil {
+				cmdResult = g.cmdHandler.HandleCommand(msg)
+			}
 			if cmdResult.Handled {
 				g.logger.Infof("[gateway] command handled: %s", truncate(msg.Content, 40))
 				
@@ -433,27 +494,26 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 	}
 }
 
-	// 3. Check for SendFile tool results (agent wants to send files)
-	sendFileResults := g.extractSendFileResults(resp)
-	if len(sendFileResults) > 0 {
-		// Send files immediately
-		for _, filePath := range sendFileResults {
-			g.logger.Infof("[gateway] SendFile detected: %s", filePath)
-			g.bus.Outbound <- bus.OutboundMessage{
-				Channel: msg.Channel,
-				ChatID:  msg.ChatID,
-				Media:   []string{filePath},
-			}
-		}
-	}
-	
-	// 4. AskUserQuestion（通过 HookEvents）
-	if question := g.extractAskUserQuestion(resp); question != "" {
-		g.logger.Infof("[gateway] AskUserQuestion: %s", truncate(question, 60))
+	// 3 & 4. Process all hook events in one pass
+	hookResult := g.processHookEvents(resp)
+
+	// Send files
+	for _, filePath := range hookResult.sendFiles {
+		g.logger.Infof("[gateway] SendFile detected: %s", filePath)
 		g.bus.Outbound <- bus.OutboundMessage{
 			Channel: msg.Channel,
 			ChatID:  msg.ChatID,
-			Content: question,
+			Media:   []string{filePath},
+		}
+	}
+
+	// AskUserQuestion takes priority and short-circuits
+	if hookResult.askQuestion != "" {
+		g.logger.Infof("[gateway] AskUserQuestion: %s", truncate(hookResult.askQuestion, 60))
+		g.bus.Outbound <- bus.OutboundMessage{
+			Channel: msg.Channel,
+			ChatID:  msg.ChatID,
+			Content: hookResult.askQuestion,
 		}
 		return
 	}
@@ -481,82 +541,109 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 			ChatID:  msg.ChatID,
 			Content: result,
 		}
-	} else if len(sendFileResults) == 0 { // Only warn if no files were sent
+	} else if len(hookResult.sendFiles) == 0 {
 		g.logger.Warnf("[gateway] no response generated for %s/%s", msg.Channel, msg.SenderID)
 	}
+
+	// Notify user about memory writes
+	if hookResult.memoryNotice != "" {
+		g.bus.Outbound <- bus.OutboundMessage{
+			Channel: msg.Channel,
+			ChatID:  msg.ChatID,
+			Content: hookResult.memoryNotice,
+		}
+	}
 }
 
-// extractSendFileResults extracts file paths from SendFile tool results
-func (g *Gateway) extractSendFileResults(resp *api.Response) []string {
-	if resp == nil {
-		return nil
-	}
-	
-	var files []string
-	// Extract from FileAttachment events created by SDK
-	for _, event := range resp.HookEvents {
-		if event.Type != events.FileAttachment {
-			continue
-		}
-		
-		payload, ok := event.Payload.(events.FileAttachmentPayload)
-		if !ok {
-			continue
-		}
-		
-		g.logger.Debugf("[gateway] Found FileAttachment event, path: %s, tool: %s", payload.FilePath, payload.ToolName)
-		
-		// Only extract files from SendFile tool
-		if payload.ToolName == "SendFile" && payload.FilePath != "" {
-			files = append(files, payload.FilePath)
-			g.logger.Debugf("[gateway] Extracted file from SendFile: %s", payload.FilePath)
-		}
-	}
-	
-	if len(files) > 0 {
-		g.logger.Infof("[gateway] Extracted %d file(s) from SendFile tool", len(files))
-	}
-	return files
+// hookEventResult holds all data extracted from a single pass over resp.HookEvents.
+type hookEventResult struct {
+	sendFiles    []string
+	askQuestion  string
+	memoryNotice string
 }
 
-// extractAskUserQuestion extracts formatted question from AskUserQuestion tool execution
-func (g *Gateway) extractAskUserQuestion(resp *api.Response) string {
+// processHookEvents iterates resp.HookEvents once and extracts all relevant data.
+func (g *Gateway) processHookEvents(resp *api.Response) hookEventResult {
 	if resp == nil {
-		return ""
+		return hookEventResult{}
 	}
-	
-	// Collect tool names for summary logging
-	var toolNames []string
-	var askUserResult string
-	
+
+	type memWrite struct {
+		path  string
+		bytes int
+	}
+	var (
+		res       hookEventResult
+		toolNames []string
+		memWrites []memWrite
+	)
+
 	for _, event := range resp.HookEvents {
-		if event.Type != events.PostToolUse {
-			continue
-		}
-		
-		payload, ok := event.Payload.(events.ToolResultPayload)
-		if !ok {
-			continue
-		}
-		
-		toolNames = append(toolNames, payload.Name)
-		
-		if payload.Name != "AskUserQuestion" && payload.Name != "ask_user_question" {
-			continue
-		}
-		
-		// payload.Result is the formatted question string
-		if output, ok := payload.Result.(string); ok && output != "" {
-			askUserResult = output
+		switch event.Type {
+		case events.PostToolUse:
+			payload, ok := event.Payload.(events.ToolResultPayload)
+			if !ok {
+				continue
+			}
+			toolNames = append(toolNames, payload.Name)
+
+			switch payload.Name {
+			case "AskUserQuestion", "ask_user_question":
+				if output, ok := payload.Result.(string); ok && output != "" {
+					res.askQuestion = output
+				}
+
+			case "memory_write":
+				if payload.Err != nil {
+					continue
+				}
+				path, _ := payload.Params["path"].(string)
+				if path == "" {
+					path = "memory"
+				}
+				n := 0
+				if output, ok := payload.Result.(string); ok {
+					fmt.Sscanf(output, "Appended %d", &n)
+					if n == 0 {
+						fmt.Sscanf(output, "Written %d", &n)
+					}
+				}
+				memWrites = append(memWrites, memWrite{path: path, bytes: n})
+			}
+
+		case events.FileAttachment:
+			payload, ok := event.Payload.(events.FileAttachmentPayload)
+			if !ok {
+				continue
+			}
+			g.logger.Debugf("[gateway] FileAttachment: path=%s tool=%s", payload.FilePath, payload.ToolName)
+			if payload.ToolName == "SendFile" && payload.FilePath != "" {
+				res.sendFiles = append(res.sendFiles, payload.FilePath)
+			}
 		}
 	}
-	
-	// Log summary if tools were used
+
 	if len(toolNames) > 0 {
 		g.logger.Debugf("[gateway] PostToolUse: used %d tool(s): %v", len(toolNames), toolNames)
 	}
-	
-	return askUserResult
+	if len(res.sendFiles) > 0 {
+		g.logger.Infof("[gateway] Extracted %d file(s) from SendFile tool", len(res.sendFiles))
+	}
+
+	// Build memory notice
+	if len(memWrites) > 0 {
+		parts := make([]string, 0, len(memWrites))
+		for _, w := range memWrites {
+			if w.bytes > 0 {
+				parts = append(parts, fmt.Sprintf("📝 %s (+%d bytes)", w.path, w.bytes))
+			} else {
+				parts = append(parts, fmt.Sprintf("📝 %s", w.path))
+			}
+		}
+		res.memoryNotice = strings.Join(parts, "\n")
+	}
+
+	return res
 }
 
 func (g *Gateway) Shutdown() error {
@@ -607,6 +694,34 @@ func (g *Gateway) sendStartupNotification() {
 	
 	// Clean up trigger file
 	os.Remove(restartTriggerFile)
+}
+
+// heartbeatNotify delivers a heartbeat agent response to the user.
+// It sends to the last active session, falling back to the first configured
+// Telegram allowFrom user if no session is currently active.
+func (g *Gateway) heartbeatNotify(result string) {
+	channelID := g.currentChannelID
+	chatID := g.currentChatID
+
+	// Fallback: use first Telegram allowFrom
+	if channelID == "" || chatID == "" {
+		if len(g.cfg.Channels.Telegram.AllowFrom) > 0 {
+			channelID = "telegram"
+			chatID = g.cfg.Channels.Telegram.AllowFrom[0]
+		}
+	}
+
+	if channelID == "" || chatID == "" {
+		g.logger.Warnf("[heartbeat] cannot notify: no active session and no allowFrom configured")
+		return
+	}
+
+	g.logger.Infof("[heartbeat] notifying user channel=%s chatID=%s", channelID, chatID)
+	g.bus.Outbound <- bus.OutboundMessage{
+		Channel: channelID,
+		ChatID:  chatID,
+		Content: result,
+	}
 }
 
 func truncate(s string, n int) string {

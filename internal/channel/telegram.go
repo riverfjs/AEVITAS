@@ -331,20 +331,34 @@ func (t *TelegramChannel) sendMediaFile(chatID int64, filePath string) error {
 	isImage := ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp"
 
 	if isImage {
-		// Send as photo
+		// Send as photo; fall back to document when Telegram rejects the image
+		// (e.g. PHOTO_INVALID_DIMENSIONS for very tall/wide screenshots).
 		photo := tgbotapi.NewPhoto(chatID, tgbotapi.FilePath(filePath))
 		photo.Caption = filepath.Base(filePath)
-		_, err := t.bot.Send(photo)
-		if err != nil {
-			return fmt.Errorf("send telegram photo: %w", err)
+		if _, err := t.bot.Send(photo); err != nil {
+			t.logger.Warnf("photo upload failed (%v), retrying as document: %s", err, filePath)
+			doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
+			doc.Caption = filepath.Base(filePath)
+			if _, docErr := t.bot.Send(doc); docErr != nil {
+				return fmt.Errorf("send telegram document (photo fallback): %w", docErr)
+			}
+			t.logger.Infof("sent file as document (photo fallback) chat_id=%d path=%s", chatID, filePath)
+		} else {
+			t.logger.Infof("sent photo to telegram chat_id=%d path=%s", chatID, filePath)
 		}
-		t.logger.Infof("sent photo to telegram chat_id=%d path=%s", chatID, filePath)
 	} else {
-		// Send as document (for log files, etc.)
-		doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
-		doc.Caption = filepath.Base(filePath)
-		_, err := t.bot.Send(doc)
+		// Send as document using FileBytes so the display name is always the
+		// symlink name (e.g. "myclaw.log") rather than the symlink target
+		// (e.g. "myclaw-20260224.log") which tgbotapi.FilePath would resolve.
+		data, err := os.ReadFile(filePath)
 		if err != nil {
+			return fmt.Errorf("read file for telegram: %w", err)
+		}
+		doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{
+			Name:  filepath.Base(filePath),
+			Bytes: data,
+		})
+		if _, err := t.bot.Send(doc); err != nil {
 			return fmt.Errorf("send telegram document: %w", err)
 		}
 		t.logger.Infof("sent document to telegram chat_id=%d path=%s", chatID, filePath)

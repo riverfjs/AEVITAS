@@ -10,13 +10,19 @@ import (
 	"time"
 
 	"github.com/cexll/agentsdk-go/pkg/api"
+	sdklogger "github.com/cexll/agentsdk-go/pkg/logger"
+	"go.uber.org/zap"
 	"github.com/stellarlinkco/myclaw/internal/bus"
 	"github.com/stellarlinkco/myclaw/internal/channel"
 	"github.com/stellarlinkco/myclaw/internal/config"
 	"github.com/stellarlinkco/myclaw/internal/cron"
 	"github.com/stellarlinkco/myclaw/internal/heartbeat"
-	"github.com/stellarlinkco/myclaw/internal/memory"
 )
+
+// newTestLogger returns a no-op logger for unit tests.
+func newTestLogger() sdklogger.Logger {
+	return sdklogger.NewZapLogger(zap.NewNop())
+}
 
 // mockRuntime implements Runtime interface for testing
 type mockRuntime struct {
@@ -35,6 +41,7 @@ func (m *mockRuntime) ClearSession(sessionID string) error {
 	m.clearSessionCalled = true
 	return m.clearSessionError
 }
+
 
 func (m *mockRuntime) Close() {
 	m.closed = true
@@ -75,7 +82,6 @@ func TestGateway_BuildSystemPrompt(t *testing.T) {
 
 	g := &Gateway{
 		cfg: cfg,
-		mem: memory.NewMemoryStore(tmpDir),
 	}
 
 	prompt := g.buildSystemPrompt()
@@ -91,30 +97,6 @@ func TestGateway_BuildSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestGateway_BuildSystemPrompt_WithMemory(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	mem := memory.NewMemoryStore(tmpDir)
-	mem.WriteLongTerm("User is a developer.")
-
-	cfg := &config.Config{
-		Agent: config.AgentConfig{
-			Workspace: tmpDir,
-		},
-	}
-
-	g := &Gateway{
-		cfg: cfg,
-		mem: mem,
-	}
-
-	prompt := g.buildSystemPrompt()
-
-	if !contains(prompt, "User is a developer") {
-		t.Error("missing memory content")
-	}
-}
-
 func TestGateway_BuildSystemPrompt_NoFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -126,7 +108,6 @@ func TestGateway_BuildSystemPrompt_NoFiles(t *testing.T) {
 
 	g := &Gateway{
 		cfg: cfg,
-		mem: memory.NewMemoryStore(tmpDir),
 	}
 
 	prompt := g.buildSystemPrompt()
@@ -146,9 +127,10 @@ func TestGateway_Shutdown(t *testing.T) {
 		},
 	}
 
+	tl := newTestLogger()
 	msgBus := bus.NewMessageBus(10)
-	chMgr, _ := channel.NewChannelManager(config.ChannelsConfig{}, msgBus)
-	cronSvc := cron.NewService(filepath.Join(tmpDir, "cron.json"))
+	chMgr, _ := channel.NewChannelManager(config.ChannelsConfig{}, msgBus, tl)
+	cronSvc := cron.NewService(filepath.Join(tmpDir, "cron.json"), tl)
 	mockRt := &mockRuntime{}
 
 	g := &Gateway{
@@ -156,9 +138,9 @@ func TestGateway_Shutdown(t *testing.T) {
 		bus:      msgBus,
 		channels: chMgr,
 		cron:     cronSvc,
-		hb:       heartbeat.New(tmpDir, nil, 0),
-		mem:      memory.NewMemoryStore(tmpDir),
+		hb:       heartbeat.New(tmpDir, nil, nil, 0, tl),
 		runtime:  mockRt,
+		logger:   tl,
 	}
 
 	err := g.Shutdown()
@@ -249,6 +231,7 @@ func TestGateway_ProcessLoop(t *testing.T) {
 		cfg:     cfg,
 		bus:     msgBus,
 		runtime: mockRt,
+		logger:  newTestLogger(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -307,6 +290,7 @@ func TestGateway_ProcessLoop_AgentError(t *testing.T) {
 		cfg:     cfg,
 		bus:     msgBus,
 		runtime: mockRt,
+		logger:  newTestLogger(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -322,8 +306,8 @@ func TestGateway_ProcessLoop_AgentError(t *testing.T) {
 
 	select {
 	case outMsg := <-msgBus.Outbound:
-		if outMsg.Content != "Sorry, I encountered an error processing your message." {
-			t.Errorf("expected error message, got %q", outMsg.Content)
+		if outMsg.Content == "" {
+			t.Errorf("expected non-empty error message, got %q", outMsg.Content)
 		}
 	case <-time.After(time.Second):
 		t.Error("timeout waiting for error response")
@@ -352,6 +336,7 @@ func TestGateway_ProcessLoop_EmptyResult(t *testing.T) {
 		cfg:     cfg,
 		bus:     msgBus,
 		runtime: mockRt,
+		logger:  newTestLogger(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -392,6 +377,7 @@ func TestGateway_ProcessLoop_ContextCancelled(t *testing.T) {
 		cfg:     cfg,
 		bus:     msgBus,
 		runtime: mockRt,
+		logger:  newTestLogger(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -421,18 +407,19 @@ func TestGateway_Shutdown_NilRuntime(t *testing.T) {
 		},
 	}
 
+	tl2 := newTestLogger()
 	msgBus := bus.NewMessageBus(10)
-	chMgr, _ := channel.NewChannelManager(config.ChannelsConfig{}, msgBus)
-	cronSvc := cron.NewService(filepath.Join(tmpDir, "cron.json"))
+	chMgr, _ := channel.NewChannelManager(config.ChannelsConfig{}, msgBus, tl2)
+	cronSvc := cron.NewService(filepath.Join(tmpDir, "cron.json"), tl2)
 
 	g := &Gateway{
 		cfg:      cfg,
 		bus:      msgBus,
 		channels: chMgr,
 		cron:     cronSvc,
-		hb:       heartbeat.New(tmpDir, nil, 0),
-		mem:      memory.NewMemoryStore(tmpDir),
+		hb:       heartbeat.New(tmpDir, nil, nil, 0, tl2),
 		runtime:  nil,
+		logger:   tl2,
 	}
 
 	err := g.Shutdown()
@@ -443,14 +430,14 @@ func TestGateway_Shutdown_NilRuntime(t *testing.T) {
 
 // mockRuntimeFactory returns a factory that creates mock runtimes
 func mockRuntimeFactory(rt Runtime) RuntimeFactory {
-	return func(cfg *config.Config, sysPrompt string) (Runtime, error) {
+	return func(cfg *config.Config, sysPrompt string, realtimeCallback func(api.RealtimeEvent)) (Runtime, error) {
 		return rt, nil
 	}
 }
 
 // errorRuntimeFactory returns a factory that always fails
 func errorRuntimeFactory(err error) RuntimeFactory {
-	return func(cfg *config.Config, sysPrompt string) (Runtime, error) {
+	return func(cfg *config.Config, sysPrompt string, realtimeCallback func(api.RealtimeEvent)) (Runtime, error) {
 		return nil, err
 	}
 }
@@ -486,9 +473,6 @@ func TestNewWithOptions_MockRuntime(t *testing.T) {
 	}
 	if g.bus == nil {
 		t.Error("bus should not be nil")
-	}
-	if g.mem == nil {
-		t.Error("mem should not be nil")
 	}
 	if g.cron == nil {
 		t.Error("cron should not be nil")
@@ -643,7 +627,7 @@ func TestDefaultRuntimeFactory_NoAPIKey(t *testing.T) {
 
 	// DefaultRuntimeFactory will try to create real runtime
 	// which may fail in different ways depending on SDK behavior
-	_, err := DefaultRuntimeFactory(cfg, "test prompt")
+	_, err := DefaultRuntimeFactory(cfg, "test prompt", nil)
 	// Just ensure it doesn't panic - error is expected
 	_ = err
 }

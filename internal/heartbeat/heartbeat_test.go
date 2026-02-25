@@ -11,7 +11,7 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	s := New("/tmp/ws", nil, 0)
+	s := New("/tmp/ws", nil, nil, 0, nil)
 	if s == nil {
 		t.Fatal("New returned nil")
 	}
@@ -21,7 +21,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestNew_CustomInterval(t *testing.T) {
-	s := New("/tmp/ws", nil, 5*time.Minute)
+	s := New("/tmp/ws", nil, nil, 5*time.Minute, nil)
 	if s.interval != 5*time.Minute {
 		t.Errorf("interval = %v, want 5m", s.interval)
 	}
@@ -33,7 +33,7 @@ func TestTick_NoFile(t *testing.T) {
 	s := New(tmpDir, func(prompt string) (string, error) {
 		called.Add(1)
 		return "ok", nil
-	}, time.Second)
+	}, nil, time.Second, nil)
 
 	s.tick()
 
@@ -50,7 +50,7 @@ func TestTick_EmptyFile(t *testing.T) {
 	s := New(tmpDir, func(prompt string) (string, error) {
 		called.Add(1)
 		return "ok", nil
-	}, time.Second)
+	}, nil, time.Second, nil)
 
 	s.tick()
 
@@ -67,7 +67,7 @@ func TestTick_WithContent(t *testing.T) {
 	s := New(tmpDir, func(prompt string) (string, error) {
 		receivedPrompt = prompt
 		return "done", nil
-	}, time.Second)
+	}, nil, time.Second, nil)
 
 	s.tick()
 
@@ -78,7 +78,7 @@ func TestTick_WithContent(t *testing.T) {
 
 func TestStart_ContextCancel(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := New(tmpDir, nil, 100*time.Millisecond)
+	s := New(tmpDir, nil, nil, 100*time.Millisecond, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -103,14 +103,13 @@ func TestStart_ContextCancel(t *testing.T) {
 func TestStart_TickerFires(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create HEARTBEAT.md
 	os.WriteFile(filepath.Join(tmpDir, "HEARTBEAT.md"), []byte("tick"), 0644)
 
 	tickCount := 0
 	s := New(tmpDir, func(prompt string) (string, error) {
 		tickCount++
 		return "ok", nil
-	}, 50*time.Millisecond)
+	}, nil, 50*time.Millisecond, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -119,7 +118,6 @@ func TestStart_TickerFires(t *testing.T) {
 		done <- s.Start(ctx)
 	}()
 
-	// Wait for at least one tick
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 
@@ -136,9 +134,8 @@ func TestTick_HandlerError(t *testing.T) {
 
 	s := New(tmpDir, func(prompt string) (string, error) {
 		return "", fmt.Errorf("handler error")
-	}, time.Second)
+	}, nil, time.Second, nil)
 
-	// Should not panic on handler error
 	s.tick()
 }
 
@@ -150,7 +147,7 @@ func TestTick_HeartbeatOK(t *testing.T) {
 	s := New(tmpDir, func(prompt string) (string, error) {
 		called = true
 		return "HEARTBEAT_OK - nothing to do", nil
-	}, time.Second)
+	}, nil, time.Second, nil)
 
 	s.tick()
 
@@ -163,10 +160,48 @@ func TestTick_NoHandler(t *testing.T) {
 	tmpDir := t.TempDir()
 	os.WriteFile(filepath.Join(tmpDir, "HEARTBEAT.md"), []byte("Check tasks"), 0644)
 
-	s := New(tmpDir, nil, time.Second)
+	s := New(tmpDir, nil, nil, time.Second, nil)
 
-	// Should not panic when handler is nil
 	s.tick()
+}
+
+func TestTick_NotifyFn(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "HEARTBEAT.md"), []byte("Check tasks"), 0644)
+
+	var notified []string
+	s := New(tmpDir, func(prompt string) (string, error) {
+		return "Important update!", nil
+	}, func(result string) {
+		notified = append(notified, result)
+	}, time.Second, nil)
+
+	s.tick()
+
+	if len(notified) != 1 || notified[0] != "Important update!" {
+		t.Errorf("notifyFn got %v, want [Important update!]", notified)
+	}
+}
+
+func TestTick_Deduplication(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "HEARTBEAT.md"), []byte("Check tasks"), 0644)
+
+	notifyCount := 0
+	s := New(tmpDir, func(prompt string) (string, error) {
+		return "Same message", nil
+	}, func(result string) {
+		notifyCount++
+	}, time.Second, nil)
+
+	// First tick: should notify
+	s.tick()
+	// Second tick: same result within dedupWindow, should skip
+	s.tick()
+
+	if notifyCount != 1 {
+		t.Errorf("expected 1 notification, got %d", notifyCount)
+	}
 }
 
 func TestTruncate(t *testing.T) {
