@@ -1,6 +1,6 @@
-# myclaw
+# AEVITAS (myclaw)
 
-Personal AI assistant built on [agentsdk-go](https://github.com/cexll/agentsdk-go), forked from [stellarlinkco/myclaw](https://github.com/stellarlinkco/myclaw).
+Personal AI assistant built on [agentsdk-go](https://github.com/riverfjs/agentsdk-go), forked from [stellarlinkco/myclaw](https://github.com/stellarlinkco/myclaw).
 
 ## Features
 
@@ -10,9 +10,11 @@ Personal AI assistant built on [agentsdk-go](https://github.com/cexll/agentsdk-g
 - **Feishu Channel** - Receive and send messages via Feishu (Lark) bot
 - **WeCom Channel** - Receive inbound messages and send markdown replies via WeCom intelligent bot API mode
 - **Multi-Provider** - Support for Anthropic and OpenAI models
-- **Cron Jobs** - Scheduled tasks with JSON persistence
+- **Cron Jobs** - Scheduled tasks managed via WebSocket RPC gateway
+- **WebSocket RPC** - JSON-RPC over WebSocket for cron management (compatible with openclaw protocol)
 - **Heartbeat** - Periodic tasks from HEARTBEAT.md
-- **Memory** - Long-term (MEMORY.md) + daily memories
+- **Skills** - Pluggable skill scripts (flight-monitor, todoist, browser, etc.)
+- **Tool Progress** - Per-call tool logging with parameters sent to Telegram in real time
 
 ## Quick Start
 
@@ -35,7 +37,7 @@ export MYCLAW_API_KEY=your-api-key
 # Run agent (REPL mode)
 make run
 
-# Start gateway (channels + cron + heartbeat)
+# Start gateway (channels + cron + heartbeat + RPC)
 make gateway
 
 # Skills management
@@ -51,7 +53,7 @@ make skills-uninstall <name>  # Uninstall a skill (with y/n confirmation)
 |--------|-------------|
 | `make build` | Build binary |
 | `make run` | Run agent REPL |
-| `make gateway` | Start gateway (channels + cron + heartbeat) |
+| `make gateway` | Start gateway (channels + cron + heartbeat + RPC) |
 | `make onboard` | Initialize config and workspace |
 | `make status` | Show myclaw status |
 | `make setup` | Interactive config setup (generates `~/.myclaw/config.json`) |
@@ -98,11 +100,12 @@ make skills-uninstall <name>  # Uninstall a skill (with y/n confirmation)
                   │  │   (ReAct loop + tool execution)  │  │
                   │  └──────────────────────────────────┘  │
                   │                                       │
-                  │  ┌──────────┐  ┌────────────────────┐  │
-                  │  │  Memory  │  │      Config        │  │
-                  │  │ (MEMORY  │  │  (JSON + env vars) │  │
-                  │  │  + daily)│  │                    │  │
-                  │  └──────────┘  └────────────────────┘  │
+                  │  ┌──────────────────────────────────┐  │
+                  │  │    WebSocket RPC Server           │  │
+                  │  │  ws://0.0.0.0:18790              │  │
+                  │  │  cron.list | cron.add | cron.run  │  │
+                  │  │  cron.remove | cron.enable        │  │
+                  │  └──────────────────────────────────┘  │
                   └───────────────────────────────────────┘
 
 Data Flow (Gateway Mode):
@@ -113,6 +116,9 @@ Data Flow (Gateway Mode):
                                                        │
                                                        ▼
                                         Bus.Outbound ──► Channel ──► Telegram/Feishu/WeCom
+
+RPC Flow (Skill → Cron):
+  todoist cron-add/list/run ──► ws://127.0.0.1:18790 ──► cron.Service
 ```
 
 ## Project Structure
@@ -124,9 +130,14 @@ internal/
   channel/           Channel interface + Telegram + Feishu + WeCom implementations
   config/            Configuration loading (JSON + env vars)
   cron/              Cron job scheduling with JSON persistence
-  gateway/           Gateway orchestration (bus + runtime + channels)
+  gateway/           Gateway orchestration (bus + runtime + channels + RPC)
   heartbeat/         Periodic heartbeat service
-  memory/            Memory system (long-term + daily)
+  rpc/               WebSocket RPC server + cron handlers
+skills/
+  browser/           Browser automation skill (Playwright)
+  flight-monitor/    Flight price monitoring skill
+  todoist/           Task & cron management skill (uses RPC gateway)
+  skill-creator/     Skill scaffolding guide
 docs/
   telegram-setup.md  Telegram bot setup guide
   feishu-setup.md    Feishu bot setup guide
@@ -157,6 +168,10 @@ Run `make setup` for interactive config, or copy `config.example.json` to `~/.my
       "threshold": 2,
       "markers": []
     }
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
   },
   "channels": {
     "telegram": {
@@ -324,7 +339,6 @@ make lint            # Run golangci-lint
 | internal/config | 91.2% |
 | internal/channel | 90.5% |
 | internal/gateway | 90.2% |
-| internal/memory | 89.1% |
 | cmd/myclaw | 82.3% |
 
 ## License
