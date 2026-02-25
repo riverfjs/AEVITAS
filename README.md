@@ -155,19 +155,37 @@ Run `make setup` for interactive config, or copy `config.example.json` to `~/.my
 
 ```json
 {
+  "agent": {
+    "workspace": "~/.myclaw/workspace",
+    "model": "claude-sonnet-4-5-20250929",
+    "maxTokens": 8192,
+    "temperature": 0.7,
+    "maxToolIterations": 100,
+    "historyLimit": 30,
+    "autoRecall": true,
+    "toolLog": {
+      "enabled": true,
+      "interval": 1
+    },
+    "compaction": {
+      "enabled": true,
+      "threshold": 0.8
+    },
+    "contextWindow": {
+      "tokens": 200000,
+      "warnRatio": 0.8,
+      "hardMinTokens": 2000
+    },
+    "memoryFlush": {
+      "enabled": true,
+      "reserveTokensFloor": 20000,
+      "softThresholdTokens": 4000
+    }
+  },
   "provider": {
     "type": "anthropic",
     "apiKey": "your-api-key",
     "baseUrl": ""
-  },
-  "agent": {
-    "model": "claude-sonnet-4-5-20250929",
-    "maxToolIterations": 100,
-    "errorGuard": {
-      "enabled": true,
-      "threshold": 2,
-      "markers": []
-    }
   },
   "gateway": {
     "host": "0.0.0.0",
@@ -177,24 +195,31 @@ Run `make setup` for interactive config, or copy `config.example.json` to `~/.my
     "telegram": {
       "enabled": true,
       "token": "your-bot-token",
-      "allowFrom": ["123456789"]
+      "allowFrom": ["123456789"],
+      "proxy": ""
     },
     "feishu": {
-      "enabled": true,
-      "appId": "cli_xxx",
-      "appSecret": "your-app-secret",
-      "verificationToken": "your-verification-token",
+      "enabled": false,
+      "appId": "",
+      "appSecret": "",
+      "verificationToken": "",
+      "encryptKey": "",
       "port": 9876,
       "allowFrom": []
     },
     "wecom": {
-      "enabled": true,
-      "token": "your-token",
-      "encodingAESKey": "your-43-char-encoding-aes-key",
+      "enabled": false,
+      "token": "",
+      "encodingAESKey": "",
       "receiveId": "",
       "port": 9886,
-      "allowFrom": ["zhangsan"]
+      "allowFrom": []
     }
+  },
+  "tools": {
+    "braveApiKey": "",
+    "execTimeout": 60,
+    "restrictToWorkspace": true
   }
 }
 ```
