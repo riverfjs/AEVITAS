@@ -346,6 +346,7 @@ func (g *Gateway) start(ctx context.Context) error {
 	rpcAddr := fmt.Sprintf("%s:%d", g.cfg.Gateway.Host, g.cfg.Gateway.Port)
 	rpcSrv := rpc.NewServer(g.logger)
 	rpc.RegisterCronHandlers(rpcSrv, g.cron)
+	rpc.RegisterNotifyHandlers(rpcSrv, g.bus)
 	if err := rpcSrv.Start(ctx, rpcAddr); err != nil {
 		return fmt.Errorf("rpc server: %w", err)
 	}

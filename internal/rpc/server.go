@@ -143,6 +143,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				websocket.CloseNormalClosure,
 				websocket.CloseGoingAway,
 				websocket.CloseAbnormalClosure,
+				// 1005: Node.js 21+ built-in WebSocket closes without sending a status code.
+				// Treat as normal disconnect — not an error.
+				websocket.CloseNoStatusReceived,
 			) {
 				s.logger.Infof("[rpc] client disconnected: %s", r.RemoteAddr)
 			} else {
@@ -190,7 +193,6 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // Broadcast sends an event frame to all connected clients.
-// (Reserved for future use — presence, job-completion notifications, etc.)
 func (s *Server) Broadcast(event string, payload interface{}) {
 	// Currently no-op. Add client registry here when push events are needed.
 }
