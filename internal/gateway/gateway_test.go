@@ -661,7 +661,6 @@ func TestGateway_CronOnJob(t *testing.T) {
 		ID: "test-job",
 		Payload: cron.Payload{
 			Message: "test message",
-			Deliver: false,
 		},
 	}
 
@@ -703,7 +702,9 @@ func TestGateway_CronOnJob_WithDelivery(t *testing.T) {
 		ID: "test-job",
 		Payload: cron.Payload{
 			Message: "test message",
-			Deliver: true,
+		},
+		Delivery: &cron.Delivery{
+			Mode:    "announce",
 			Channel: "telegram",
 			To:      "12345",
 		},

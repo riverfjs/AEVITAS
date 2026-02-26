@@ -8,7 +8,14 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
+	"go.uber.org/zap"
 )
+
+func newTestLogger() sdklogger.Logger {
+	return sdklogger.NewZapLogger(zap.NewNop())
+}
 
 func TestNewCronJob(t *testing.T) {
 	job := NewCronJob("test", Schedule{Kind: "cron", Expr: "0 * * * *"}, Payload{Message: "hello"})
@@ -29,7 +36,7 @@ func TestNewCronJob(t *testing.T) {
 func TestService_AddAndListJobs(t *testing.T) {
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "jobs.json")
-	s := NewService(storePath)
+	s := NewService(storePath, newTestLogger())
 
 	job, err := s.AddJob("job1", Schedule{Kind: "every", EveryMs: 60000}, Payload{Message: "tick"})
 	if err != nil {
@@ -63,7 +70,7 @@ func TestService_AddAndListJobs(t *testing.T) {
 
 func TestService_RemoveJob(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	job, _ := s.AddJob("rm-test", Schedule{Kind: "every", EveryMs: 1000}, Payload{Message: "x"})
 
@@ -82,7 +89,7 @@ func TestService_RemoveJob(t *testing.T) {
 
 func TestService_EnableJob(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	job, _ := s.AddJob("toggle", Schedule{Kind: "every", EveryMs: 1000}, Payload{Message: "x"})
 
@@ -111,7 +118,7 @@ func TestService_EnableJob(t *testing.T) {
 
 func TestService_StartStop(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -131,12 +138,12 @@ func TestService_Persistence(t *testing.T) {
 	storePath := filepath.Join(tmpDir, "jobs.json")
 
 	// Add jobs with first service
-	s1 := NewService(storePath)
+	s1 := NewService(storePath, newTestLogger())
 	s1.AddJob("persist1", Schedule{Kind: "every", EveryMs: 1000}, Payload{Message: "p1"})
 	s1.AddJob("persist2", Schedule{Kind: "every", EveryMs: 2000}, Payload{Message: "p2"})
 
 	// Load with second service
-	s2 := NewService(storePath)
+	s2 := NewService(storePath, newTestLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s2.Start(ctx)
@@ -150,7 +157,7 @@ func TestService_Persistence(t *testing.T) {
 
 func TestService_ExecuteJob_WithHandler(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	var executed bool
 	var receivedJob CronJob
@@ -184,7 +191,7 @@ func TestService_ExecuteJob_WithHandler(t *testing.T) {
 
 func TestService_ExecuteJob_NoHandler(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	job, _ := s.AddJob("no-handler", Schedule{Kind: "every", EveryMs: 1000}, Payload{Message: "x"})
 
@@ -194,7 +201,7 @@ func TestService_ExecuteJob_NoHandler(t *testing.T) {
 
 func TestService_ExecuteJob_HandlerError(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	s.OnJob = func(job CronJob) (string, error) {
 		return "", fmt.Errorf("handler error")
@@ -214,7 +221,7 @@ func TestService_ExecuteJob_HandlerError(t *testing.T) {
 
 func TestService_ExecuteJob_DeleteAfterRun(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	s.OnJob = func(job CronJob) (string, error) {
 		return "done", nil
@@ -236,7 +243,7 @@ func TestService_ExecuteJob_DeleteAfterRun(t *testing.T) {
 
 func TestService_TickLoop_EverySchedule(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	executeCount := 0
 	s.OnJob = func(job CronJob) (string, error) {
@@ -265,7 +272,7 @@ func TestService_TickLoop_EverySchedule(t *testing.T) {
 
 func TestService_TickLoop_AtSchedule(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	executed := false
 	s.OnJob = func(job CronJob) (string, error) {
@@ -293,7 +300,7 @@ func TestService_TickLoop_AtSchedule(t *testing.T) {
 
 func TestService_RegisterCronJob(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -329,7 +336,7 @@ func TestService_CronJobWithInvalidExpr(t *testing.T) {
 	data, _ := json.MarshalIndent(jobs, "", "  ")
 	os.WriteFile(storePath, data, 0644)
 
-	s := NewService(storePath)
+	s := NewService(storePath, newTestLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -357,7 +364,7 @@ func TestService_RegisterCronJob_Success(t *testing.T) {
 	data, _ := json.MarshalIndent(jobs, "", "  ")
 	os.WriteFile(storePath, data, 0644)
 
-	s := NewService(storePath)
+	s := NewService(storePath, newTestLogger())
 	s.OnJob = func(job CronJob) (string, error) {
 		return "done", nil
 	}
@@ -380,7 +387,7 @@ func TestService_RegisterCronJob_Success(t *testing.T) {
 
 func TestService_RemoveJob_WithCron(t *testing.T) {
 	tmpDir := t.TempDir()
-	s := NewService(filepath.Join(tmpDir, "jobs.json"))
+	s := NewService(filepath.Join(tmpDir, "jobs.json"), newTestLogger())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
