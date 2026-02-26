@@ -21,7 +21,6 @@
  */
 
 const https = require('https');
-const url   = require('url');
 
 // IATA → Chinese city name (for ly.com query string)
 const CITY = {
@@ -36,14 +35,16 @@ const CITY = {
 
 function get(urlStr) {
   return new Promise((resolve, reject) => {
-    const opts = { ...url.parse(urlStr), headers: {
+    const requestUrl = new URL(urlStr);
+    const opts = { headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept-Language': 'zh-CN,zh;q=0.9',
       'Accept': 'text/html,application/xhtml+xml',
     }};
-    https.get(opts, res => {
+    https.get(requestUrl, opts, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return get(res.headers.location).then(resolve).catch(reject);
+        const redirected = new URL(res.headers.location, requestUrl).toString();
+        return get(redirected).then(resolve).catch(reject);
       }
       const chunks = [];
       res.on('data', c => chunks.push(c));

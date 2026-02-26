@@ -62,19 +62,15 @@ func RegisterCronHandlers(s *Server, svc *cron.Service) {
 			respond(false, nil, "missing name")
 			return
 		}
-		job, err := svc.AddJob(p.Name, p.Schedule, p.Payload)
+		job, err := svc.AddJobWithOptions(p.Name, p.Schedule, p.Payload, cron.AddJobOptions{
+			SessionTarget:  p.SessionTarget,
+			Delivery:       p.Delivery,
+			DeleteAfterRun: p.DeleteAfterRun,
+		})
 		if err != nil {
 			respond(false, nil, err.Error())
 			return
 		}
-		// Apply optional fields not in the AddJob signature
-		if p.SessionTarget != "" {
-			job.SessionTarget = p.SessionTarget
-		}
-		if p.Delivery != nil {
-			job.Delivery = p.Delivery
-		}
-		job.DeleteAfterRun = p.DeleteAfterRun
 		respond(true, job, "")
 	})
 

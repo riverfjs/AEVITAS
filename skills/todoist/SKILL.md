@@ -19,6 +19,17 @@ Manage tasks with reminders and schedule recurring/one-shot jobs through myclaw'
 
 **Binary:** `~/.myclaw/workspace/.claude/skills/todoist/bin/todoist`
 
+### First run
+```bash
+bash ~/.myclaw/workspace/.claude/skills/todoist/scripts/bootstrap.sh
+```
+
+### Standard command entry
+```bash
+TODOIST=~/.myclaw/workspace/.claude/skills/todoist/bin/todoist
+$TODOIST <subcommand> ...
+```
+
 **Config:** `~/.myclaw/workspace/.claude/skills/todoist/config.json`
 ```json
 { "channel": "telegram", "chat_id": "<user-chat-id>" }
@@ -26,20 +37,20 @@ Manage tasks with reminders and schedule recurring/one-shot jobs through myclaw'
 
 ### Task commands
 ```bash
-todoist add "description"
-todoist add "description" --due 2026-04-01
-todoist list
-todoist complete <id>
-todoist delete <id>
-todoist reminders          # show overdue tasks
+$TODOIST add "description"
+$TODOIST add "description" --due 2026-04-01
+$TODOIST list
+$TODOIST complete <id>
+$TODOIST delete <id>
+$TODOIST reminders          # show overdue tasks
 ```
 
 ### Cron commands (→ gateway ws://127.0.0.1:18790 via WS RPC)
 ```bash
-todoist cron-list                              # list all cron jobs
-todoist cron-run <job-id>                      # trigger immediately
-todoist cron-add "<name>" "<shell cmd>" <ms>   # add recurring job
-todoist cron-delete <job-id>                   # delete a job
+$TODOIST cron-list                              # list all cron jobs and get job id
+$TODOIST cron-run <job-id>                      # trigger immediately
+$TODOIST cron-add "<name>" "<shell cmd>" <ms>   # add recurring job
+$TODOIST cron-delete <job-id>                   # delete a job
 ```
 
 **Common intervals:**
@@ -47,12 +58,7 @@ todoist cron-delete <job-id>                   # delete a job
 1h  = 3600000    6h = 21600000    12h = 43200000    24h = 86400000
 ```
 
-**Example — trigger flight monitor now:**
-```bash
-todoist cron-run flight-monitor-auto
-```
-
-> `cron-run` is **async** — returns immediately after triggering. The result is delivered to Telegram by the gateway automatically. Do NOT run the underlying script manually, do NOT analyze results, do NOT send a summary reply. Just confirm the trigger to the user and stop.
+> `cron-run` is **async** — returns immediately after triggering. The result is delivered to Telegram by the gateway automatically. Do not run extra diagnostic commands unless the user explicitly asks.
 
 ## Source layout
 
@@ -68,7 +74,8 @@ scripts/
 
 - Always use `todoist` commands to manage cron jobs — never read or write `jobs.json` directly, never use `ls`/`cat` to inspect files
 - `todoist cron-list` is the only correct way to list jobs
-- After `cron-run`, do not wait, analyze, or reply with results — the gateway handles delivery
+- `todoist cron-run` accepts **job id only** (from `cron-list`), not job name
+- After `cron-run`, do not chain extra checks unless the user explicitly asks
 
 ## Notes
 

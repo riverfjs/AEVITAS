@@ -1,19 +1,33 @@
 ---
 name: flight-search
-description: Search round-trip domestic flights (China) via ly.com. Guides the user through selecting outbound then return flights with pricing.
+description: Fetch round-trip flight options and prices from ly.com. This skill is search/fetch only; monitoring, scheduling, and notifications are handled by flight-monitor.
 ---
 
 # Flight Search
 
+This skill is a data fetch utility. It does not persist monitor configs and does not send scheduled alerts.
+Use `flight-monitor` for monitoring workflows.
+Monitoring mode definitions and schedule semantics are defined by `flight-monitor`.
+
+## Price Semantics (Important)
+
+- In `mode: "outbound"`, each `flights[i].price` is the outbound fare shown by the source page.
+- In `mode: "return"`, each `flights[i].price` is already the **round-trip total** returned by the script/source.
+- In `mode: "return"`, `flights[i].extra` is computed by the script as:
+  - `extra = price - outboundPrice`
+  - This is the incremental return-leg amount for display only.
+- The agent must not recompute total prices independently. Use script output as source of truth.
+
 ## Tool
 
 ```
-node skills/flight-search/scripts/search.cjs <DEPART> <ARRIVE> <DEPART_DATE> <RETURN_DATE> [OUTBOUND_FLIGHT]
+node skills/flight-search/scripts/search.cjs <DEPART> <ARRIVE> <DEPART_DATE> <RETURN_DATE> [OUTBOUND_FLIGHT] [OUTBOUND_PRICE]
 ```
 
 - `DEPART` / `ARRIVE`: IATA airport codes (e.g. `SZX`, `CKG`, `PEK`, `SHA`, `CAN`, `CTU`)
 - `DEPART_DATE` / `RETURN_DATE`: `YYYY-MM-DD`
 - `OUTBOUND_FLIGHT` (optional): selected outbound flight number → triggers return-flight mode
+- `OUTBOUND_PRICE` (optional, used with `OUTBOUND_FLIGHT`): outbound fare used by script to compute `extra = total - outboundPrice`
 
 Output JSON:
 ```json
@@ -32,7 +46,7 @@ Ask the user (one message):
 - Departure date
 - Return date
 
-Map city names to IATA codes (SZX=深圳, CKG=重庆, PEK/PKX=北京, SHA/PVG=上海, CAN=广州, CTU=成都, etc.)
+Map city names to IATA codes (e.g. SZX=Shenzhen, CKG=Chongqing, PEK/PKX=Beijing, SHA/PVG=Shanghai, CAN=Guangzhou, CTU=Chengdu).
 
 ### Step 1 — Show outbound flights
 Run (no `OUTBOUND_FLIGHT`):
@@ -43,11 +57,11 @@ node skills/flight-search/scripts/search.cjs SZX CKG 2026-04-03 2026-04-07
 Present results as a numbered table, sorted by price:
 
 ```
-去程：深圳 → 重庆  2026-04-03（共 N 班）
+Outbound: Shenzhen -> Chongqing  2026-04-03 (N flights)
  1. CZ2346  20:40→23:05  ¥1734
  2. CZ3641  21:10→23:35  ¥1816
  ...
-请选择去程航班（输入序号或航班号）：
+Please choose an outbound flight (index or flight number):
 ```
 
 ### Step 2 — Show return flights
@@ -61,24 +75,28 @@ The `extra` field = total − outbound price = incremental cost of the return le
 
 Present return flights showing both:
 ```
-返程：重庆 → 深圳  2026-04-07（共 N 班，价格为往返合计）
- 1. CZ2335  08:00→10:20  往返¥4142（返程+¥2071）
- 2. CZ5920  20:50→23:05  往返¥4324（返程+¥2253）
+Return: Chongqing -> Shenzhen  2026-04-07 (N flights, price is round-trip total)
+ 1. CZ3466  11:45→13:55  Total ¥2507  (Return +¥436)
+ 2. CZ5920  20:50→23:05  Total ¥2715  (Return +¥644)
  ...
-请选择返程航班：
+Please choose a return flight:
 ```
 
 ### Step 3 — Summary
-After the user picks a return flight, show the final summary using the **total price** (`price` from step 2 output):
+After the user picks a return flight, show the final summary using script fields directly:
+- Outbound fare = selected outbound `price` from step 1
+- Return incremental = selected return `extra` from step 2
+- Final round-trip total = selected return `price` from step 2 (already total)
 
 ```
-✅ 行程确认
+Trip Confirmed
 
-去程  CZ3455  深圳→重庆  04-03  13:25→15:45  ¥2071
-返程  CZ2335  重庆→深圳  04-07  08:00→10:20  +¥2071
-往返合计：¥4142
+Outbound  CZ3455  Shenzhen->Chongqing  04-03  13:25->15:45  ¥2071
+Return    CZ3466  Chongqing->Shenzhen  04-07  11:45->13:55  +¥436
+Round-trip total: ¥2507
 
-🔗 同程订票：https://www.ly.com/flights/itinerary/roundtrip/SZX-CKG?date=2026-04-03,2026-04-07&from=深圳&to=重庆&fromairport=&toairport=&p=&childticket=0,0&flightno=CZ3455
+Booking URL:
+https://www.ly.com/flights/itinerary/roundtrip/SZX-CKG?date=2026-04-03,2026-04-07&from=Shenzhen&to=Chongqing&fromairport=&toairport=&p=&childticket=0,0&flightno=CZ3455
 ```
 
 ## Rules
@@ -86,5 +104,5 @@ After the user picks a return flight, show the final summary using the **total p
 - Always run the script; never guess prices or flight times.
 - Do NOT call WebSearch or use the browser skill for this task.
 - If `flights` array is empty, tell the user no flights were found and suggest changing dates.
-- When user says a time like "13:25那班" or "第5个", match it to the correct flight number before proceeding.
+- When user says a time like "the 13:25 one" or "the 5th one", map it to the correct flight number before proceeding.
 - The booking URL uses the outbound flight number as `flightno=` parameter — always include it.

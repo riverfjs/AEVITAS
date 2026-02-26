@@ -23,6 +23,12 @@ type Service struct {
 	logger    sdklogger.Logger
 }
 
+type AddJobOptions struct {
+	SessionTarget  SessionTarget
+	Delivery       *Delivery
+	DeleteAfterRun bool
+}
+
 func NewService(storePath string, logger sdklogger.Logger) *Service {
 	return &Service{
 		storePath: storePath,
@@ -158,10 +164,21 @@ func (s *Service) Stop() {
 }
 
 func (s *Service) AddJob(name string, schedule Schedule, payload Payload) (*CronJob, error) {
+	return s.AddJobWithOptions(name, schedule, payload, AddJobOptions{})
+}
+
+func (s *Service) AddJobWithOptions(name string, schedule Schedule, payload Payload, opts AddJobOptions) (*CronJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	job := NewCronJob(name, schedule, payload)
+	if opts.SessionTarget != "" {
+		job.SessionTarget = opts.SessionTarget
+	}
+	if opts.Delivery != nil {
+		job.Delivery = opts.Delivery
+	}
+	job.DeleteAfterRun = opts.DeleteAfterRun
 	s.jobs = append(s.jobs, job)
 
 	if job.Schedule.Kind == "cron" && s.cron != nil {
