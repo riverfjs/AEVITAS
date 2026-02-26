@@ -1,53 +1,56 @@
 ---
 name: flight-monitor
-description: Monitor specific flight prices on Trip.com using Playwright. Tracks price changes and reports to Telegram automatically every 6 hours. Use when user asks about flight prices, wants to add/remove a monitored route, check current prices, or trigger an immediate price check.
+description: Set up recurring price monitoring for a specific flight. Guides the user through flight-search first to pick a flight, then schedules automatic price-drop alerts.
 ---
 
 # Flight Monitor
 
-Track specific routes and flight numbers on Trip.com; compare current prices against history and report changes via Telegram.
+Track a specific flight's price via ly.com and send a Telegram notification when it drops below the reference price.
 
-## ⚠️ Rules — Read Before Anything Else
+## Setup Flow
 
-- **NEVER** use `cat`, `ls`, `grep`, `head`, `mkdir` or any shell command to inspect files under `data/`
-- **NEVER** read or parse `monitors.txt`, `price_history.txt`, `prices.json` directly
-- **NEVER** create directories manually — the scripts handle their own setup
-- Use **only** the commands listed in Implementation below
-- After `cron-run`, do NOT also run `monitor.sh` manually or analyze results — gateway delivers to Telegram automatically
+### Step 1 — Search first
 
-## Capabilities
+If the user hasn't selected a flight yet, invoke the `flight-search` skill first so they can browse options and pick one.
 
-- Add a flight route to monitor (origin, destination, dates, flight times)
-- Check current prices immediately — result auto-delivered to Telegram
-- List active monitors
-- View price history
-- Delete a monitor
-- Runs automatically every 6 hours via cron
+Once the user has chosen an outbound flight, you will have:
+- Route: depart / arrive IATA codes
+- Dates: departure date, return date
+- Flight number (e.g. `CZ3455`)
+- Current price (reference price, e.g. `2071`)
 
-## Implementation
+### Step 2 — Add the monitor
 
-**Scripts location:** `~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/`
+```bash
+bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
+  add SZX CKG 2026-04-03 2026-04-07 CZ3455 2071
+#       from to  depart     return     flight  refPrice
+```
 
-**List all monitors:**
+### Step 3 — Schedule
+
+Ask the user how often to check (e.g. every 6 h, 12 h, 24 h). Then create a cron job:
+
+```bash
+# 6 h = 21600000 ms | 12 h = 43200000 ms | 24 h = 86400000 ms
+~/.myclaw/workspace/.claude/skills/todoist/bin/todoist cron-add \
+  "flight-monitor-<id>" \
+  "node ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/check.cjs" \
+  21600000
+```
+
+Confirm: "已设置，每 X 小时检查一次，价格低于参考价 ¥Y 时会发 Telegram 通知。"
+
+## Management
+
+**List monitors:**
 ```bash
 bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh list
 ```
 
-**Check prices NOW (async → result sent to Telegram):**
+**Check prices now:**
 ```bash
-todoist cron-run flight-monitor-auto
-```
-
-**View price history:**
-```bash
-bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh history
-```
-
-**Add a monitor** (IATA codes + flight times):
-```bash
-bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
-  add SZX CKG 2026-04-03 2026-04-07 13:05 15:30 15:50 18:05
-#       from to  depart-date return-date  ob-dep ob-arr ret-dep ret-arr
+node ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/check.cjs
 ```
 
 **Delete a monitor:**
@@ -55,8 +58,14 @@ bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
 bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh delete <id>
 ```
 
-## Notes
+**Delete the cron job** (when monitor is deleted):
+```bash
+~/.myclaw/workspace/.claude/skills/todoist/bin/todoist cron-delete flight-monitor-<id>
+```
 
-- Uses Trip.com (not Google Flights); prices in CNY
-- Browser lifecycle (Chrome CDP port 9222) managed automatically by monitor.sh — do not start/stop manually
-- Cron job `flight-monitor-auto` already registered — do not re-register
+## Rules
+
+- Always run `flight-search` first — never ask the user to manually type flight details
+- Reference price = the price seen in `flight-search` at the time of setup
+- Notification is sent only when current price **drops below** the reference price
+- Do not hardcode a check interval — ask the user

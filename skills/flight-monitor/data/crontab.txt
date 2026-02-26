@@ -1,2 +1,0 @@
-# 航班价格监控 - 每6小时执行一次
-0 */6 * * * bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh check-all >> ~/.myclaw/workspace/.claude/skills/flight-monitor/data/monitor.log 2>&1
