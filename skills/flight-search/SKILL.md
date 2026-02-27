@@ -11,29 +11,43 @@ Monitoring mode definitions and schedule semantics are defined by `flight-monito
 
 ## Price Semantics (Important)
 
-- In `mode: "outbound"`, each `flights[i].price` is the outbound fare shown by the source page.
-- In `mode: "return"`, each `flights[i].price` is already the **round-trip total** returned by the script/source.
-- In `mode: "return"`, `flights[i].extra` is computed by the script as:
-  - `extra = price - outboundPrice`
-  - This is the incremental return-leg amount for display only.
-- The agent must not recompute total prices independently. Use script output as source of truth.
+- `flights[i].price` is an object:
+  - `price.amount`: numeric price for sorting/comparison
+  - `price.text`: display text from source (e.g. `¥2025起`)
+- In `mode: "outbound_day"`, `price` is outbound fare.
+- In `mode: "return_after_outbound"` and `mode: "roundtrip_locked"`, `price` is round-trip total from source.
+- In `mode: "return_after_outbound"`, `flights[i].extra = price.amount - outboundPrice`.
+- The script output is source of truth; agent must not recompute totals by itself.
+
+## Route Support
+
+- Mainland domestic and international routes both use browser-driven extraction.
+- `search.cjs` reuses browser skill lifecycle (`start.cjs` + CDP connection).
+- All three modes support international routes.
 
 ## Tool
 
 ```
-node skills/flight-search/scripts/search.cjs <DEPART> <ARRIVE> <DEPART_DATE> <RETURN_DATE> [OUTBOUND_FLIGHT] [OUTBOUND_PRICE]
+node skills/flight-search/scripts/search.cjs outbound_day <DEPART> <ARRIVE> <DEPART_DATE> [oneway|roundtrip_context] [RETURN_DATE]
+node skills/flight-search/scripts/search.cjs return_after_outbound <DEPART> <ARRIVE> <DEPART_DATE> <RETURN_DATE> <OUTBOUND_FLIGHT> <OUTBOUND_PRICE>
+node skills/flight-search/scripts/search.cjs roundtrip_locked <DEPART> <ARRIVE> <DEPART_DATE> <RETURN_DATE> <OUTBOUND_FLIGHT>
 ```
 
 - `DEPART` / `ARRIVE`: IATA airport codes (e.g. `SZX`, `CKG`, `PEK`, `SHA`, `CAN`, `CTU`)
 - `DEPART_DATE` / `RETURN_DATE`: `YYYY-MM-DD`
-- `OUTBOUND_FLIGHT` (optional): selected outbound flight number → triggers return-flight mode
-- `OUTBOUND_PRICE` (optional, used with `OUTBOUND_FLIGHT`): outbound fare used by script to compute `extra = total - outboundPrice`
+- `tripType`: `oneway` or `roundtrip_context`
+- `OUTBOUND_FLIGHT`: selected outbound flight number
+- `OUTBOUND_PRICE`: outbound fare used by script to compute `extra = total - outboundPrice`
 
 Output JSON:
 ```json
 {
-  "mode": "outbound" | "return",
-  "flights": [{ "flight": "CZ3455", "dep": "13:25", "arr": "15:45", "price": 2071 }, ...]
+  "mode": "outbound_day" | "return_after_outbound" | "roundtrip_locked",
+  "view": {
+    "table": "formatted table block for direct display",
+    "hint": "next-step hint"
+  },
+  "flights": [{ "flight": "CZ3455", "dep": "13:25", "arr": "15:45", "price": { "amount": 2071, "text": "¥2071起" } }, ...]
 }
 ```
 
@@ -49,44 +63,26 @@ Ask the user (one message):
 Map city names to IATA codes (e.g. SZX=Shenzhen, CKG=Chongqing, PEK/PKX=Beijing, SHA/PVG=Shanghai, CAN=Guangzhou, CTU=Chengdu).
 
 ### Step 1 — Show outbound flights
-Run (no `OUTBOUND_FLIGHT`):
+Run:
 ```
-node skills/flight-search/scripts/search.cjs SZX CKG 2026-04-03 2026-04-07
+node skills/flight-search/scripts/search.cjs outbound_day SZX CKG 2026-04-03 oneway
 ```
 
-Present results as a numbered table, sorted by price:
-
-```
-Outbound: Shenzhen -> Chongqing  2026-04-03 (N flights)
- 1. CZ2346  20:40→23:05  ¥1734
- 2. CZ3641  21:10→23:35  ¥1816
- ...
-Please choose an outbound flight (index or flight number):
-```
+Display `view.table` directly, then ask with `view.hint`.
 
 ### Step 2 — Show return flights
-After the user picks an outbound flight, pass its flight number **and price** to the script:
+After the user picks an outbound flight, pass its flight number and `price.amount` to the script:
 ```
-node skills/flight-search/scripts/search.cjs SZX CKG 2026-04-03 2026-04-07 CZ3455 2071
+node skills/flight-search/scripts/search.cjs return_after_outbound SZX CKG 2026-04-03 2026-04-07 CZ3455 2071
 ```
 
-The `price` in the return result is the **round-trip total** (ly.com accumulates both legs).
-The `extra` field = total − outbound price = incremental cost of the return leg.
-
-Present return flights showing both:
-```
-Return: Chongqing -> Shenzhen  2026-04-07 (N flights, price is round-trip total)
- 1. CZ3466  11:45→13:55  Total ¥2507  (Return +¥436)
- 2. CZ5920  20:50→23:05  Total ¥2715  (Return +¥644)
- ...
-Please choose a return flight:
-```
+Display `view.table` directly, then ask with `view.hint`.
 
 ### Step 3 — Summary
 After the user picks a return flight, show the final summary using script fields directly:
-- Outbound fare = selected outbound `price` from step 1
+- Outbound fare = selected outbound `price.amount` from step 1
 - Return incremental = selected return `extra` from step 2
-- Final round-trip total = selected return `price` from step 2 (already total)
+- Final round-trip total = selected return `price.amount` from step 2 (already total)
 
 ```
 Trip Confirmed
@@ -101,7 +97,9 @@ https://www.ly.com/flights/itinerary/roundtrip/SZX-CKG?date=2026-04-03,2026-04-0
 
 ## Rules
 
-- Always run the script; never guess prices or flight times.
+- Always run the script; never guess prices or times.
+- Must present the full `flights` array returned by the script; never truncate to top N.
+- Prefer showing `view.table` directly instead of re-formatting tables in the skill.
 - Do NOT call WebSearch or use the browser skill for this task.
 - If `flights` array is empty, tell the user no flights were found and suggest changing dates.
 - When user says a time like "the 13:25 one" or "the 5th one", map it to the correct flight number before proceeding.

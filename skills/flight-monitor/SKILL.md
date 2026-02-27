@@ -1,13 +1,14 @@
 ---
 name: flight-monitor
-description: Manage recurring flight price monitoring in three modes (locked round-trip, outbound-day, return-watch). flight-search is only used to fetch flight options; monitor.sh + check.cjs own monitoring state and notifications.
+description: Manage recurring flight price monitoring in three modes (locked round-trip, outbound-day, return-watch). flight-search owns flight data + formatted view output; monitor.sh + check.cjs own monitoring state and notifications.
 ---
 
 # Flight Monitor
 
 This skill is the monitoring orchestrator.
 It stores monitor configs, performs scheduled checks, compares price changes, and pushes notifications.
-`flight-search` is a fetch tool only; it does not own monitor state.
+`flight-search` owns fetch + display view generation (`view.table`).
+`flight-monitor` owns monitor lifecycle/state only.
 
 ## Monitoring Modes
 
@@ -35,7 +36,8 @@ Map answers to mode:
 - outbound not fixed -> `outbound_day`
 - outbound fixed, return not fixed -> `return_after_outbound`
 
-Use `flight-search` first whenever needed to fetch current options/prices, then create the monitor in this skill.
+Use `flight-search` first whenever needed to fetch options/prices, and directly show `view.table`.
+After user confirms selected flights, create monitor in this skill.
 
 ## Commands
 
@@ -104,8 +106,11 @@ Delete schedule when monitor is removed:
 
 ## Rules
 
-- `flight-search` fetches data; `flight-monitor` owns monitoring lifecycle.
+- `flight-search` owns data fetch + table formatting; `flight-monitor` must not re-format full flight tables.
+- `flight-monitor` owns monitoring lifecycle only.
+- No legacy fallback: monitor records must use current mode schema (`roundtrip_locked` / `outbound_day` / `return_after_outbound`).
 - Do not force a specific mode before asking user confirmation status.
 - Do not hardcode check interval; ask user (6h / 12h / 24h etc.).
 - Each scheduled run sends execution result to Telegram via gateway delivery.
 - If current check cannot find a target flight, keep monitor and retry next run.
+- Interactive flow still requires waiting for user choices (outbound/return/monitor params) before creating monitor tasks.

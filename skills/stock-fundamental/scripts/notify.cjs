@@ -55,26 +55,52 @@ async function notify(message) {
 
   await new Promise(resolve => {
     let done  = false;
+    let opened = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
+    let ws;
+    // Give the round-trip at most 1.2 seconds; skip silently on timeout.
+    const timer = setTimeout(() => {
+      try {
+        if (ws) ws.close(1000, 'timeout');
+      } catch {}
+      finish();
+    }, 1200);
 
-    // Give the round-trip at most 3 seconds; skip silently on timeout.
-    const timer = setTimeout(() => { try { ws.close(); } catch {} finish(); }, 3000);
-
-    const ws = new WebSocket(wsUrl); // Node.js 21+ global — no import needed
+    try {
+      ws = new WebSocket(wsUrl); // Node.js 21+ global — no import needed
+    } catch {
+      clearTimeout(timer);
+      finish();
+      return;
+    }
 
     ws.addEventListener('open', () => {
+      opened = true;
       ws.send(JSON.stringify({
         type:   'req',
         id:     `notify-${Date.now()}`,
         method: 'notify.send',
         params: { channel, chatId, message },
       }));
+      // Give gateway a brief moment to receive before closing client side.
+      setTimeout(() => {
+        try { ws.close(1000, 'done'); } catch {}
+      }, 80);
     });
 
     // Close as soon as we receive the response — we don't need to read it.
-    ws.addEventListener('message', () => { clearTimeout(timer); ws.close(); finish(); });
+    ws.addEventListener('message', () => {
+      clearTimeout(timer);
+      try { ws.close(1000, 'done'); } catch {}
+      finish();
+    });
     ws.addEventListener('error',   () => { clearTimeout(timer); finish(); });
-    ws.addEventListener('close',   finish);
+    ws.addEventListener('close',   () => {
+      clearTimeout(timer);
+      // If close happens before open, treat as transient and ignore.
+      if (!opened) return finish();
+      finish();
+    });
   });
 }
 
