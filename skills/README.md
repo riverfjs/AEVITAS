@@ -92,6 +92,24 @@ node ~/.aevitas/workspace/.claude/skills/browser/scripts/scrape.cjs <url> '<java
 Documentation/process skill for creating or updating skills.
 It defines file-structure and SKILL.md writing standards.
 
+### `python-conda-workspace`
+
+Standard Python execution skill with fixed Conda env `aevitas-workspace`.
+
+Main commands:
+
+```bash
+bash ~/.aevitas/workspace/.claude/skills/python-conda-workspace/scripts/bootstrap.sh
+bash ~/.aevitas/workspace/.claude/skills/python-conda-workspace/scripts/init-work.sh work1
+bash ~/.aevitas/workspace/.claude/skills/python-conda-workspace/scripts/check.sh
+bash ~/.aevitas/workspace/.claude/skills/python-conda-workspace/scripts/list-work.sh
+# NOTE: list projects with list-work.sh (not run.sh list)
+bash ~/.aevitas/workspace/.claude/skills/python-conda-workspace/scripts/install.sh --work work1 <package...>
+bash ~/.aevitas/workspace/.claude/skills/python-conda-workspace/scripts/install.sh --work work1 --conda cairo
+bash ~/.aevitas/workspace/.claude/skills/python-conda-workspace/scripts/run.sh --work work1 --file main.py
+bash ~/.aevitas/workspace/.claude/skills/python-conda-workspace/scripts/clean.sh work1 --all
+```
+
 ## Development Notes
 
 - Keep SKILL.md in English.
