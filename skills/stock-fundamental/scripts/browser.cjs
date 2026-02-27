@@ -9,12 +9,12 @@ const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
 const { chromium } = require(
-  path.join(os.homedir(), '.myclaw/workspace/.claude/skills/browser/node_modules/playwright')
+  path.join(os.homedir(), '.aevitas/workspace/.claude/skills/browser/node_modules/playwright')
 );
 
 const CDP_PORT    = 9222;
 const CDP_URL     = `http://127.0.0.1:${CDP_PORT}`;
-const PROFILE_DIR = path.join(os.homedir(), '.myclaw', 'browser-profile');
+const PROFILE_DIR = path.join(os.homedir(), '.aevitas', 'browser-profile');
 
 function findChrome() {
   const candidates = {

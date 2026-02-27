@@ -5,7 +5,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
-const PROFILE_DIR = path.join(os.homedir(), '.myclaw', 'browser-profile');
+const PROFILE_DIR = path.join(os.homedir(), '.aevitas', 'browser-profile');
 const CDP_PORT = 9222;
 
 function findChrome() {

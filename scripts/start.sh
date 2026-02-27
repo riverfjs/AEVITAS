@@ -1,15 +1,15 @@
 #!/bin/bash
-# Start myclaw gateway in background with nohup
+# Start aevitas gateway in background with nohup
 
 set -e
 
-MYCLAW_BIN="${HOME}/.myclaw/bin/myclaw"
-NOHUP_LOG="${HOME}/.myclaw/workspace/logs/nohup.out"
-PID_FILE="${HOME}/.myclaw/myclaw.pid"
+AEVITAS_BIN="${HOME}/.aevitas/bin/aevitas"
+NOHUP_LOG="${HOME}/.aevitas/workspace/logs/nohup.out"
+PID_FILE="${HOME}/.aevitas/aevitas.pid"
 
 # Check if binary exists
-if [ ! -f "$MYCLAW_BIN" ]; then
-    echo "Error: myclaw binary not found at $MYCLAW_BIN"
+if [ ! -f "$AEVITAS_BIN" ]; then
+    echo "Error: aevitas binary not found at $AEVITAS_BIN"
     echo "Run 'make prod' to build and install"
     exit 1
 fi
@@ -18,7 +18,7 @@ fi
 if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
     if ps -p "$PID" > /dev/null 2>&1; then
-        echo "myclaw gateway is already running (PID: $PID)"
+        echo "aevitas gateway is already running (PID: $PID)"
         exit 1
     else
         # Stale PID file, remove it
@@ -30,14 +30,14 @@ fi
 mkdir -p "$(dirname "$NOHUP_LOG")"
 
 # Start in background with daemon mode
-echo "Starting myclaw gateway..."
-MYCLAW_DAEMON=1 nohup "$MYCLAW_BIN" gateway >> "$NOHUP_LOG" 2>&1 &
+echo "Starting aevitas gateway..."
+AEVITAS_DAEMON=1 nohup "$AEVITAS_BIN" gateway >> "$NOHUP_LOG" 2>&1 &
 PID=$!
 
 # Save PID
 echo "$PID" > "$PID_FILE"
 
-echo "myclaw gateway started (PID: $PID)"
-echo "Main logs: ~/.myclaw/workspace/logs/myclaw.log"
+echo "aevitas gateway started (PID: $PID)"
+echo "Main logs: ~/.aevitas/workspace/logs/aevitas.log"
 echo "Startup logs: $NOHUP_LOG"
 

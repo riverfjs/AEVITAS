@@ -3,24 +3,24 @@
 ## 前置条件
 
 - Telegram 账号
-- myclaw 已编译（`make build`）
+- aevitas 已编译（`make build`）
 
 ## 第一步：创建 Telegram Bot
 
 1. 在 Telegram 中搜索 **@BotFather**，发送 `/newbot`
 2. 按提示输入 Bot 名称（如 `My Claw Assistant`）
-3. 输入 Bot 用户名（必须以 `bot` 结尾，如 `myclaw_bot`）
+3. 输入 Bot 用户名（必须以 `bot` 结尾，如 `aevitas_bot`）
 4. BotFather 会返回一个 **Bot Token**，格式如：
    ```
    1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
    ```
 5. 保存此 Token
 
-## 第二步：配置 myclaw
+## 第二步：配置 aevitas
 
 ### 方式一：配置文件
 
-编辑 `~/.myclaw/config.json`：
+编辑 `~/.aevitas/config.json`：
 
 ```json
 {
@@ -38,7 +38,7 @@
 ### 方式二：环境变量
 
 ```bash
-export MYCLAW_TELEGRAM_TOKEN="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+export AEVITAS_TELEGRAM_TOKEN="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
 ```
 
 ## 第三步：配置参数说明
@@ -66,12 +66,12 @@ export MYCLAW_TELEGRAM_TOKEN="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
 make gateway
 
 # 或直接运行
-./myclaw gateway
+./aevitas gateway
 ```
 
 日志中看到以下内容表示成功：
 ```
-[telegram] authorized as @myclaw_bot
+[telegram] authorized as @aevitas_bot
 [telegram] polling started
 ```
 
@@ -99,7 +99,7 @@ make gateway
 
 **Q: Bot 没有响应？**
 - 检查日志是否有 `[telegram] authorized as @xxx`
-- 确认 API Key 已配置（`myclaw status`）
+- 确认 API Key 已配置（`aevitas status`）
 - 如果在国内，确认代理配置正确
 
 **Q: 收到 "Sorry, I encountered an error" 回复？**

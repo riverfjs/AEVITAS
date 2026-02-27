@@ -1,7 +1,7 @@
 package main
 
 // cron.go — CronJob types and CronManager.
-// All cron operations go through the myclaw gateway WS RPC (see gateway.go).
+// All cron operations go through the aevitas gateway WS RPC (see gateway.go).
 
 import (
 	"encoding/json"
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// ── Types (mirror myclaw internal/cron/types.go) ──────────────────────────────
+// ── Types (mirror aevitas internal/cron/types.go) ──────────────────────────────
 
 type CronSchedule struct {
 	Kind    string `json:"kind"`              // "every" | "at" | "cron"

@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stellarlinkco/myclaw/internal/bus"
-	"github.com/stellarlinkco/myclaw/pkg/utils"
+	"github.com/riverfjs/aevitas/internal/bus"
+	"github.com/riverfjs/aevitas/pkg/utils"
 )
 
 // SessionResetter is an interface for clearing sessions
@@ -74,7 +74,7 @@ func (h *CommandHandler) HandleCommand(msg bus.InboundMessage) CommandResult {
 	case "/restart":
 		// Save chat info for restart notification
 		restartInfo := fmt.Sprintf("%s:%s", msg.Channel, msg.ChatID)
-		restartTriggerFile := filepath.Join(os.Getenv("HOME"), ".myclaw", "restart_trigger.txt")
+		restartTriggerFile := filepath.Join(os.Getenv("HOME"), ".aevitas", "restart_trigger.txt")
 		os.WriteFile(restartTriggerFile, []byte(restartInfo), 0644)
 		
 		return CommandResult{
@@ -200,7 +200,7 @@ func (h *CommandHandler) handleSkillList() string {
 }
 
 func (h *CommandHandler) handleRestart() string {
-	scriptPath := filepath.Join(os.Getenv("HOME"), ".myclaw", "bin", "..", "..", "Documents", "chatbot", "myclaw", "scripts", "restart.sh")
+	scriptPath := filepath.Join(os.Getenv("HOME"), ".aevitas", "bin", "..", "..", "Documents", "chatbot", "aevitas", "scripts", "restart.sh")
 	
 	// Check if restart script exists
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
@@ -218,7 +218,7 @@ func (h *CommandHandler) handleRestart() string {
 
 func (h *CommandHandler) handleLogs(arg string) CommandResult {
 	// Always use home directory for logs in production
-	logFile := filepath.Join(os.Getenv("HOME"), ".myclaw", "workspace", "logs", "myclaw.log")
+	logFile := filepath.Join(os.Getenv("HOME"), ".aevitas", "workspace", "logs", "aevitas.log")
 	
 	// Check if log file exists
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
@@ -338,7 +338,7 @@ func readLastLines(filePath string, n int) (string, error) {
 }
 
 func (h *CommandHandler) handleStatus() string {
-	pidFile := filepath.Join(os.Getenv("HOME"), ".myclaw", "myclaw.pid")
+	pidFile := filepath.Join(os.Getenv("HOME"), ".aevitas", "aevitas.pid")
 	
 	// Check if PID file exists
 	if _, err := os.Stat(pidFile); os.IsNotExist(err) {

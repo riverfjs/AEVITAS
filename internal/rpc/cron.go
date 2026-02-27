@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/stellarlinkco/myclaw/internal/cron"
+	"github.com/riverfjs/aevitas/internal/cron"
 )
 
 // RegisterCronHandlers registers all cron.* RPC methods on s.

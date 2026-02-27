@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stellarlinkco/myclaw/internal/bus"
+	"github.com/riverfjs/aevitas/internal/bus"
 )
 
 // mockSessionResetter implements SessionResetter interface

@@ -21,7 +21,7 @@ Extract data from websites using a headless Chrome browser.
 ### Step 1 — Find the entry point from homepage
 
 ```bash
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/scrape.cjs \
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/scrape.cjs \
   'https://www.example.com' \
   'Array.from(document.querySelectorAll("a")).filter(a=>a.textContent.trim()).map(a=>({text:a.textContent.trim(),url:a.href})).slice(0,30)'
 ```
@@ -31,7 +31,7 @@ Read the links, find which one leads to your target section.
 ### Step 2 — Navigate deeper, find the right sub-page
 
 ```bash
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/scrape.cjs \
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/scrape.cjs \
   '<url-from-step-1>' \
   'Array.from(document.querySelectorAll("a")).filter(a=>a.textContent.trim()).map(a=>({text:a.textContent.trim(),url:a.href}))'
 ```
@@ -40,21 +40,21 @@ node ~/.myclaw/workspace/.claude/skills/browser/scripts/scrape.cjs \
 
 **First, discover class names** (when selectors are unknown):
 ```bash
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/scrape.cjs \
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/scrape.cjs \
   '<target-url>' \
   '[...new Set(Array.from(document.querySelectorAll("[class]")).map(el=>el.className.split(" ")[0]))].filter(c=>c.length>2).slice(0,30)'
 ```
 
 **Then extract with the right selectors:**
 ```bash
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/scrape.cjs \
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/scrape.cjs \
   '<target-url>' \
   'Array.from(document.querySelectorAll(".item-class")).slice(0,10).map((el,i)=>({ rank: i+1, title: el.querySelector(".title-class")?.textContent?.trim(), value: el.querySelector(".value-class")?.textContent?.trim() }))'
 ```
 
 **If `data` is still `[]` after trying selectors, fall back to body text — do NOT retry selectors:**
 ```bash
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/scrape.cjs \
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/scrape.cjs \
   '<target-url>' \
   'document.body.innerText.slice(0, 3000)'
 ```
@@ -67,7 +67,7 @@ Every result contains `url` and `title`. Always show the user where the data cam
 ## scrape.cjs Reference
 
 ```bash
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/scrape.cjs <url> '<javascript>'
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/scrape.cjs <url> '<javascript>'
 ```
 
 - JS runs inside the page (use `document.*` freely)
@@ -89,13 +89,13 @@ Output format:
 
 ```bash
 # Only needed for multi-step interactions (click, type, wait between steps)
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/start.cjs
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/nav.cjs <url>
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/eval.cjs '<js>'
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/stop.cjs
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/start.cjs
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/nav.cjs <url>
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/eval.cjs '<js>'
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/stop.cjs
 
 # Visual debug only — not for reading data
-node ~/.myclaw/workspace/.claude/skills/browser/scripts/screenshot.cjs
+node ~/.aevitas/workspace/.claude/skills/browser/scripts/screenshot.cjs
 ```
 
 ## Useful JS Patterns

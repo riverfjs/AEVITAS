@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/stellarlinkco/myclaw/internal/bus"
+	"github.com/riverfjs/aevitas/internal/bus"
 )
 
 // RegisterNotifyHandlers registers the notify.* RPC methods on the WebSocket server.

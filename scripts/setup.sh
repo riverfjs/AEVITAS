@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_DIR="${HOME}/.myclaw"
+CONFIG_DIR="${HOME}/.aevitas"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 
-echo "=== myclaw setup ==="
+echo "=== aevitas setup ==="
 echo ""
 
 # Check if config exists
@@ -82,7 +82,7 @@ mkdir -p "$CONFIG_DIR"
 cat > "$CONFIG_FILE" <<EOF_JSON
 {
   "agent": {
-    "workspace": "${HOME}/.myclaw/workspace",
+    "workspace": "${HOME}/.aevitas/workspace",
     "model": "claude-sonnet-4-5-20250929",
     "maxTokens": 8192,
     "temperature": 0.7,
@@ -136,7 +136,7 @@ echo ""
 echo "Config written to: $CONFIG_FILE"
 
 # Initialize workspace
-WORKSPACE_DIR="${HOME}/.myclaw/workspace"
+WORKSPACE_DIR="${HOME}/.aevitas/workspace"
 echo ""
 echo "Initializing workspace: $WORKSPACE_DIR"
 mkdir -p "${WORKSPACE_DIR}/memory"

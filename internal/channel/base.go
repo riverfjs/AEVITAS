@@ -4,7 +4,7 @@ import (
 	"context"
 
 	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
-	"github.com/stellarlinkco/myclaw/internal/bus"
+	"github.com/riverfjs/aevitas/internal/bus"
 )
 
 type Channel interface {

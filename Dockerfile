@@ -7,19 +7,19 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /myclaw ./cmd/myclaw
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /aevitas ./cmd/aevitas
 
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata
 
-COPY --from=builder /myclaw /usr/local/bin/myclaw
+COPY --from=builder /aevitas /usr/local/bin/aevitas
 
-RUN mkdir -p /root/.myclaw/workspace
+RUN mkdir -p /root/.aevitas/workspace
 
-VOLUME ["/root/.myclaw"]
+VOLUME ["/root/.aevitas"]
 
 EXPOSE 18790 9876 9886
 
-ENTRYPOINT ["myclaw"]
+ENTRYPOINT ["aevitas"]
 CMD ["gateway"]

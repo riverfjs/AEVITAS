@@ -11,8 +11,8 @@ import (
 	"time"
 
 	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
-	"github.com/stellarlinkco/myclaw/internal/bus"
-	"github.com/stellarlinkco/myclaw/internal/config"
+	"github.com/riverfjs/aevitas/internal/bus"
+	"github.com/riverfjs/aevitas/internal/config"
 )
 
 const feishuChannelName = "feishu"

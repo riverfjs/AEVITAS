@@ -28,7 +28,7 @@ module.exports = {
   // Chrome launch settings
   chrome: {
     // Profile directory for persistent sessions
-    profileDir: '~/.myclaw/browser-profile',
+    profileDir: '~/.aevitas/browser-profile',
     
     // Additional Chrome flags
     args: [

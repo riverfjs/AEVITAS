@@ -2,7 +2,7 @@
 # Flight Monitor — monitor config management only (no browser).
 # Actual checking is handled by check.cjs.
 
-SKILL_DIR="$HOME/.myclaw/workspace/.claude/skills/flight-monitor"
+SKILL_DIR="$HOME/.aevitas/workspace/.claude/skills/flight-monitor"
 DATA_DIR="$SKILL_DIR/data"
 MONITORS_FILE="$DATA_DIR/monitors.json"
 

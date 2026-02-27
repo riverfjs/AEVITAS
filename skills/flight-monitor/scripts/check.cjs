@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const SKILL_DIR = path.join(os.homedir(), '.myclaw/workspace/.claude/skills');
+const SKILL_DIR = path.join(os.homedir(), '.aevitas/workspace/.claude/skills');
 const SEARCH_CJS = path.join(SKILL_DIR, 'flight-search/scripts/search.cjs');
 const DATA_FILE = path.join(__dirname, '../data/monitors.json');
 

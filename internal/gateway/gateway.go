@@ -15,13 +15,13 @@ import (
 	"github.com/riverfjs/agentsdk-go/pkg/core/events"
 	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 	"github.com/riverfjs/agentsdk-go/pkg/model"
-	"github.com/stellarlinkco/myclaw/internal/bus"
-	"github.com/stellarlinkco/myclaw/internal/channel"
-	"github.com/stellarlinkco/myclaw/internal/config"
-	"github.com/stellarlinkco/myclaw/internal/cron"
-	"github.com/stellarlinkco/myclaw/internal/heartbeat"
-	"github.com/stellarlinkco/myclaw/internal/logger"
-	"github.com/stellarlinkco/myclaw/internal/rpc"
+	"github.com/riverfjs/aevitas/internal/bus"
+	"github.com/riverfjs/aevitas/internal/channel"
+	"github.com/riverfjs/aevitas/internal/config"
+	"github.com/riverfjs/aevitas/internal/cron"
+	"github.com/riverfjs/aevitas/internal/heartbeat"
+	"github.com/riverfjs/aevitas/internal/logger"
+	"github.com/riverfjs/aevitas/internal/rpc"
 )
 
 // Runtime interface for agent runtime (allows mocking in tests)
@@ -660,7 +660,7 @@ func (g *Gateway) Shutdown() error {
 // sendStartupNotification sends a startup message to the user who triggered restart
 func (g *Gateway) sendStartupNotification() {
 	// Check if there's a restart trigger file
-	restartTriggerFile := filepath.Join(os.Getenv("HOME"), ".myclaw", "restart_trigger.txt")
+	restartTriggerFile := filepath.Join(os.Getenv("HOME"), ".aevitas", "restart_trigger.txt")
 	data, err := os.ReadFile(restartTriggerFile)
 	if err != nil {
 		// No trigger file, skip notification

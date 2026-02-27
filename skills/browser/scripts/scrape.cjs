@@ -44,12 +44,12 @@ const path = require('path');
 const os   = require('fs');
 const fs   = require('fs');
 
-const SKILL_DIR  = path.join(require('os').homedir(), '.myclaw/workspace/.claude/skills/browser');
+const SKILL_DIR  = path.join(require('os').homedir(), '.aevitas/workspace/.claude/skills/browser');
 const { chromium } = require(path.join(SKILL_DIR, 'node_modules/playwright'));
 
 const CDP_PORT    = 9222;
 const CDP_URL     = `http://127.0.0.1:${CDP_PORT}`;
-const PROFILE_DIR = path.join(require('os').homedir(), '.myclaw', 'browser-profile');
+const PROFILE_DIR = path.join(require('os').homedir(), '.aevitas', 'browser-profile');
 
 // ── Chrome lifecycle ──────────────────────────────────────────────────────────
 

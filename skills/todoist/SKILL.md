@@ -1,11 +1,11 @@
 ---
 name: todoist
-description: Task management with due-date reminders and cron job scheduling. Use when user wants to add/list/complete tasks, set reminders, or manage recurring scheduled jobs (flight monitor, price checks, etc). Cron operations talk directly to myclaw gateway via WebSocket RPC.
+description: Task management with due-date reminders and cron job scheduling. Use when user wants to add/list/complete tasks, set reminders, or manage recurring scheduled jobs (flight monitor, price checks, etc). Cron operations talk directly to aevitas gateway via WebSocket RPC.
 ---
 
 # Todoist
 
-Manage tasks with reminders and schedule recurring/one-shot jobs through myclaw's cron engine.
+Manage tasks with reminders and schedule recurring/one-shot jobs through aevitas's cron engine.
 
 ## Capabilities
 
@@ -17,20 +17,20 @@ Manage tasks with reminders and schedule recurring/one-shot jobs through myclaw'
 
 ## Implementation
 
-**Binary:** `~/.myclaw/workspace/.claude/skills/todoist/bin/todoist`
+**Binary:** `~/.aevitas/workspace/.claude/skills/todoist/bin/todoist`
 
 ### First run
 ```bash
-bash ~/.myclaw/workspace/.claude/skills/todoist/scripts/bootstrap.sh
+bash ~/.aevitas/workspace/.claude/skills/todoist/scripts/bootstrap.sh
 ```
 
 ### Standard command entry
 ```bash
-TODOIST=~/.myclaw/workspace/.claude/skills/todoist/bin/todoist
+TODOIST=~/.aevitas/workspace/.claude/skills/todoist/bin/todoist
 $TODOIST <subcommand> ...
 ```
 
-**Config:** `~/.myclaw/workspace/.claude/skills/todoist/config.json`
+**Config:** `~/.aevitas/workspace/.claude/skills/todoist/config.json`
 ```json
 { "channel": "telegram", "chat_id": "<user-chat-id>" }
 ```

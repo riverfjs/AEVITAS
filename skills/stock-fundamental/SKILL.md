@@ -16,7 +16,7 @@ description: Fetch and analyze stock fundamental data from Yahoo Finance. Use wh
 ## Command
 
 ```bash
-node ~/.myclaw/workspace/.claude/skills/stock-fundamental/scripts/fetch.cjs <SYMBOL> [quote|financials|balance|cashflow|keystats|analysis|all]
+node ~/.aevitas/workspace/.claude/skills/stock-fundamental/scripts/fetch.cjs <SYMBOL> [quote|financials|balance|cashflow|keystats|analysis|all]
 ```
 
 Symbol format:
@@ -36,9 +36,9 @@ Mode (default `all`, recommended):
 
 Examples:
 ```bash
-node ~/.myclaw/workspace/.claude/skills/stock-fundamental/scripts/fetch.cjs CLF
-node ~/.myclaw/workspace/.claude/skills/stock-fundamental/scripts/fetch.cjs AAPL quote
-node ~/.myclaw/workspace/.claude/skills/stock-fundamental/scripts/fetch.cjs 0700.HK all
+node ~/.aevitas/workspace/.claude/skills/stock-fundamental/scripts/fetch.cjs CLF
+node ~/.aevitas/workspace/.claude/skills/stock-fundamental/scripts/fetch.cjs AAPL quote
+node ~/.aevitas/workspace/.claude/skills/stock-fundamental/scripts/fetch.cjs 0700.HK all
 ```
 
 ## Output Format (always use this exact structure)

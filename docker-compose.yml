@@ -1,5 +1,5 @@
 services:
-  myclaw:
+  aevitas:
     build: .
     restart: unless-stopped
     ports:
@@ -7,24 +7,24 @@ services:
       - "9876:9876"
       - "9886:9886"
     volumes:
-      - myclaw-data:/root/.myclaw
+      - aevitas-data:/root/.aevitas
     environment:
-      - MYCLAW_API_KEY=${MYCLAW_API_KEY}
-      - MYCLAW_TELEGRAM_TOKEN=${MYCLAW_TELEGRAM_TOKEN:-}
-      - MYCLAW_FEISHU_APP_ID=${MYCLAW_FEISHU_APP_ID:-}
-      - MYCLAW_FEISHU_APP_SECRET=${MYCLAW_FEISHU_APP_SECRET:-}
-      - MYCLAW_WECOM_TOKEN=${MYCLAW_WECOM_TOKEN:-}
-      - MYCLAW_WECOM_ENCODING_AES_KEY=${MYCLAW_WECOM_ENCODING_AES_KEY:-}
-      - MYCLAW_WECOM_RECEIVE_ID=${MYCLAW_WECOM_RECEIVE_ID:-}
+      - AEVITAS_API_KEY=${AEVITAS_API_KEY}
+      - AEVITAS_TELEGRAM_TOKEN=${AEVITAS_TELEGRAM_TOKEN:-}
+      - AEVITAS_FEISHU_APP_ID=${AEVITAS_FEISHU_APP_ID:-}
+      - AEVITAS_FEISHU_APP_SECRET=${AEVITAS_FEISHU_APP_SECRET:-}
+      - AEVITAS_WECOM_TOKEN=${AEVITAS_WECOM_TOKEN:-}
+      - AEVITAS_WECOM_ENCODING_AES_KEY=${AEVITAS_WECOM_ENCODING_AES_KEY:-}
+      - AEVITAS_WECOM_RECEIVE_ID=${AEVITAS_WECOM_RECEIVE_ID:-}
 
   # Optional: expose webhook via cloudflared tunnel
   tunnel:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     profiles: ["tunnel"]
-    command: tunnel --url http://myclaw:9876
+    command: tunnel --url http://aevitas:9876
     depends_on:
-      - myclaw
+      - aevitas
 
 volumes:
-  myclaw-data:
+  aevitas-data:

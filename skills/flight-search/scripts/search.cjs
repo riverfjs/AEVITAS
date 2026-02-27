@@ -4,10 +4,10 @@
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { chromium } = require(path.join(os.homedir(), '.myclaw/workspace/.claude/skills/browser/node_modules/playwright'));
+const { chromium } = require(path.join(os.homedir(), '.aevitas/workspace/.claude/skills/browser/node_modules/playwright'));
 
 const CDP_URL = 'http://127.0.0.1:9222';
-const BROWSER_START = path.join(os.homedir(), '.myclaw/workspace/.claude/skills/browser/scripts/start.cjs');
+const BROWSER_START = path.join(os.homedir(), '.aevitas/workspace/.claude/skills/browser/scripts/start.cjs');
 
 const MAINLAND_CITY = {
   SZX: '深圳', CKG: '重庆', PEK: '北京', PKX: '北京',

@@ -54,7 +54,7 @@ func CopyBuiltinSkills(workspace string) error {
 	}
 
 	if skipped > 0 {
-		fmt.Printf("\nTip: Use 'myclaw skills update' to reinstall existing skills.\n")
+		fmt.Printf("\nTip: Use 'aevitas skills update' to reinstall existing skills.\n")
 	}
 
 	return nil
@@ -215,7 +215,7 @@ func InstallSkill(workspace, skillName string) error {
 
 	// Skip if already exists
 	if _, err := os.Stat(dstPath); err == nil {
-		fmt.Printf("Skipped: %s already exists (use 'myclaw skills update %s' to reinstall)\n", skillName, skillName)
+		fmt.Printf("Skipped: %s already exists (use 'aevitas skills update %s' to reinstall)\n", skillName, skillName)
 		return nil
 	}
 

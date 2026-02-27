@@ -44,7 +44,7 @@ After user confirms selected flights, create monitor in this skill.
 ### 1) Locked round-trip
 
 ```bash
-bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
+bash ~/.aevitas/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
   add-roundtrip SZX CKG 2026-04-03 2026-04-07 CZ3455 CZ2335 4142
 #                from to  depart     return     out     ret     baseline_total
 ```
@@ -52,20 +52,20 @@ bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
 ### 2) Outbound day-level (no fixed outbound flight)
 
 ```bash
-bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
+bash ~/.aevitas/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
   add-outbound-day SZX CKG 2026-04-03
 ```
 
 Optional round-trip query context:
 ```bash
-bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
+bash ~/.aevitas/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
   add-outbound-day SZX CKG 2026-04-03 2026-04-07
 ```
 
 ### 3) Outbound fixed, monitor best return
 
 ```bash
-bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
+bash ~/.aevitas/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
   add-return-watch SZX CKG 2026-04-03 2026-04-07 CZ3455 2071
 #                   from to  depart     return     out     outbound_price
 ```
@@ -73,24 +73,24 @@ bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh \
 ## Management
 
 ```bash
-bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh list
+bash ~/.aevitas/workspace/.claude/skills/flight-monitor/scripts/monitor.sh list
 ```
 
 ```bash
-node ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/check.cjs
+node ~/.aevitas/workspace/.claude/skills/flight-monitor/scripts/check.cjs
 ```
 
 ```bash
-bash ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/monitor.sh delete <id>
+bash ~/.aevitas/workspace/.claude/skills/flight-monitor/scripts/monitor.sh delete <id>
 ```
 
 Create schedule (ask user interval first):
 
 ```bash
 # Example: every 6h
-~/.myclaw/workspace/.claude/skills/todoist/bin/todoist cron-add \
+~/.aevitas/workspace/.claude/skills/todoist/bin/todoist cron-add \
   "flight-monitor-<id>" \
-  "node ~/.myclaw/workspace/.claude/skills/flight-monitor/scripts/check.cjs" \
+  "node ~/.aevitas/workspace/.claude/skills/flight-monitor/scripts/check.cjs" \
   21600000
 ```
 
@@ -98,10 +98,10 @@ Delete schedule when monitor is removed:
 
 ```bash
 # 1) Find the cron job id first
-~/.myclaw/workspace/.claude/skills/todoist/bin/todoist cron-list
+~/.aevitas/workspace/.claude/skills/todoist/bin/todoist cron-list
 
 # 2) Delete by job id (NOT by name)
-~/.myclaw/workspace/.claude/skills/todoist/bin/todoist cron-delete <job-id>
+~/.aevitas/workspace/.claude/skills/todoist/bin/todoist cron-delete <job-id>
 ```
 
 ## Rules

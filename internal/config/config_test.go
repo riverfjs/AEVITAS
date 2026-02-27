@@ -46,7 +46,7 @@ func TestLoadConfig_NoFile(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Clear any env overrides
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 
@@ -66,12 +66,12 @@ func TestLoadConfig_FromFile(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Clear env overrides
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 
 	// Create config file
-	cfgDir := filepath.Join(tmpDir, ".myclaw")
+	cfgDir := filepath.Join(tmpDir, ".aevitas")
 	os.MkdirAll(cfgDir, 0755)
 
 	testCfg := map[string]any{
@@ -113,14 +113,14 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 		envVal  string
 		wantKey string
 	}{
-		{"MYCLAW_API_KEY", "MYCLAW_API_KEY", "myclaw-key", "myclaw-key"},
+		{"AEVITAS_API_KEY", "AEVITAS_API_KEY", "aevitas-key", "aevitas-key"},
 		{"ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY", "anthropic-key", "anthropic-key"},
 		{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "auth-token", "auth-token"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("MYCLAW_API_KEY", "")
+			t.Setenv("AEVITAS_API_KEY", "")
 			t.Setenv("ANTHROPIC_API_KEY", "")
 			t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 			t.Setenv(tt.envKey, tt.envVal)
@@ -142,8 +142,8 @@ func TestLoadConfig_EnvPriority(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	// MYCLAW_API_KEY takes priority over ANTHROPIC_API_KEY
-	t.Setenv("MYCLAW_API_KEY", "myclaw-wins")
+	// AEVITAS_API_KEY takes priority over ANTHROPIC_API_KEY
+	t.Setenv("AEVITAS_API_KEY", "aevitas-wins")
 	t.Setenv("ANTHROPIC_API_KEY", "anthropic-loses")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "token-loses")
 
@@ -151,8 +151,8 @@ func TestLoadConfig_EnvPriority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
-	if cfg.Provider.APIKey != "myclaw-wins" {
-		t.Errorf("apiKey = %q, want myclaw-wins", cfg.Provider.APIKey)
+	if cfg.Provider.APIKey != "aevitas-wins" {
+		t.Errorf("apiKey = %q, want aevitas-wins", cfg.Provider.APIKey)
 	}
 }
 
@@ -162,9 +162,9 @@ func TestLoadConfig_BaseURLEnv(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	t.Setenv("MYCLAW_API_KEY", "key")
+	t.Setenv("AEVITAS_API_KEY", "key")
 	t.Setenv("ANTHROPIC_BASE_URL", "http://localhost:8080")
-	t.Setenv("MYCLAW_BASE_URL", "")
+	t.Setenv("AEVITAS_BASE_URL", "")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -188,7 +188,7 @@ func TestSaveConfig(t *testing.T) {
 		t.Fatalf("SaveConfig error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tmpDir, ".myclaw", "config.json"))
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".aevitas", "config.json"))
 	if err != nil {
 		t.Fatalf("read saved config: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestLoadConfig_InvalidJSON(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	cfgDir := filepath.Join(tmpDir, ".myclaw")
+	cfgDir := filepath.Join(tmpDir, ".aevitas")
 	os.MkdirAll(cfgDir, 0755)
 	os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte("invalid json"), 0644)
 
@@ -224,7 +224,7 @@ func TestLoadConfig_EmptyWorkspace(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	cfgDir := filepath.Join(tmpDir, ".myclaw")
+	cfgDir := filepath.Join(tmpDir, ".aevitas")
 	os.MkdirAll(cfgDir, 0755)
 
 	// Config with empty workspace - should use default
@@ -251,7 +251,7 @@ func TestLoadConfig_TelegramToken(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	t.Setenv("MYCLAW_TELEGRAM_TOKEN", "test-telegram-token")
+	t.Setenv("AEVITAS_TELEGRAM_TOKEN", "test-telegram-token")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -262,22 +262,22 @@ func TestLoadConfig_TelegramToken(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_MYCLAWBaseURL(t *testing.T) {
+func TestLoadConfig_AEVITASBaseURL(t *testing.T) {
 	tmpDir := t.TempDir()
 	origHome := os.Getenv("HOME")
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	t.Setenv("MYCLAW_BASE_URL", "http://myclaw.local")
+	t.Setenv("AEVITAS_BASE_URL", "http://aevitas.local")
 	t.Setenv("ANTHROPIC_BASE_URL", "http://anthropic.local")
 
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
-	// MYCLAW_BASE_URL takes priority
-	if cfg.Provider.BaseURL != "http://myclaw.local" {
-		t.Errorf("baseURL = %q, want http://myclaw.local", cfg.Provider.BaseURL)
+	// AEVITAS_BASE_URL takes priority
+	if cfg.Provider.BaseURL != "http://aevitas.local" {
+		t.Errorf("baseURL = %q, want http://aevitas.local", cfg.Provider.BaseURL)
 	}
 }
 
@@ -287,9 +287,9 @@ func TestLoadConfig_WeComEnvOverrides(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	t.Setenv("MYCLAW_WECOM_TOKEN", "wecom-token")
-	t.Setenv("MYCLAW_WECOM_ENCODING_AES_KEY", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG")
-	t.Setenv("MYCLAW_WECOM_RECEIVE_ID", "wecom-receive-id")
+	t.Setenv("AEVITAS_WECOM_TOKEN", "wecom-token")
+	t.Setenv("AEVITAS_WECOM_ENCODING_AES_KEY", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG")
+	t.Setenv("AEVITAS_WECOM_RECEIVE_ID", "wecom-receive-id")
 
 	cfg, err := LoadConfig()
 	if err != nil {

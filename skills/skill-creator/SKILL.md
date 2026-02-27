@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Create or update skills for myclaw. Use when user asks to create a new skill, add functionality, or when you need to package reusable scripts/workflows as a skill. Triggers on requests like "create a skill for X", "make a new skill", or when repeatedly writing similar code that should be packaged.
+description: Create or update skills for aevitas. Use when user asks to create a new skill, add functionality, or when you need to package reusable scripts/workflows as a skill. Triggers on requests like "create a skill for X", "make a new skill", or when repeatedly writing similar code that should be packaged.
 allowed-tools:
   - Write
   - Edit
@@ -13,7 +13,7 @@ allowed-tools:
 
 # Skill Creator
 
-Guide for creating effective skills in myclaw.
+Guide for creating effective skills in aevitas.
 
 ## Core Principles
 
@@ -91,7 +91,7 @@ One-sentence description.
 
 **Entry point:**
 ` ` `bash
-~/.myclaw/workspace/.claude/skills/skill-name/bin/tool
+~/.aevitas/workspace/.claude/skills/skill-name/bin/tool
 ` ` `
 
 **Commands (grouped by concern):**
@@ -151,7 +151,7 @@ node scripts/start.cjs   # Node.js
 bash scripts/check.sh    # Shell
 go build -o bin/tool ./scripts/  # Go
 
-./myclaw skills install skill-name
+./aevitas skills install skill-name
 ```
 
 ## Build instructions by language
@@ -171,7 +171,7 @@ go build -o bin/tool ./scripts/
 ## Commands
 
 ```bash
-./myclaw skills list           # list installed
-./myclaw skills install <name> # install skill
-./myclaw skills update <name>  # update skill
+./aevitas skills list           # list installed
+./aevitas skills install <name> # install skill
+./aevitas skills update <name>  # update skill
 ```

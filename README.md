@@ -1,6 +1,6 @@
-# AEVITAS (myclaw)
+# AEVITAS
 
-Personal AI assistant built on [agentsdk-go](https://github.com/riverfjs/agentsdk-go), forked from [stellarlinkco/myclaw](https://github.com/stellarlinkco/myclaw).
+Personal AI assistant built on [agentsdk-go](https://github.com/riverfjs/agentsdk-go), with architecture inspired by OpenClaw and earlier [myclaw](https://github.com/stellarlinkco/myclaw) workflow patterns.
 
 ## Features
 
@@ -13,7 +13,7 @@ Personal AI assistant built on [agentsdk-go](https://github.com/riverfjs/agentsd
 - **Cron Jobs** - Scheduled tasks managed via WebSocket RPC gateway
 - **WebSocket RPC** - JSON-RPC over WebSocket for cron management (compatible with openclaw protocol)
 - **Heartbeat** - Periodic tasks from HEARTBEAT.md
-- **Skills** - Pluggable skill scripts (flight-monitor, todoist, browser, etc.)
+- **Skills** - Pluggable skill system (see [`skills/README.md`](skills/README.md))
 - **Tool Progress** - Per-call tool logging with parameters sent to Telegram in real time
 
 ## Quick Start
@@ -29,10 +29,10 @@ make setup
 make onboard
 
 # Set your API key
-export MYCLAW_API_KEY=your-api-key
+export AEVITAS_API_KEY=your-api-key
 
 # Run agent (single message)
-./myclaw agent -m "Hello"
+./aevitas agent -m "Hello"
 
 # Run agent (REPL mode)
 make run
@@ -55,8 +55,8 @@ make skills-uninstall <name>  # Uninstall a skill (with y/n confirmation)
 | `make run` | Run agent REPL |
 | `make gateway` | Start gateway (channels + cron + heartbeat + RPC) |
 | `make onboard` | Initialize config and workspace |
-| `make status` | Show myclaw status |
-| `make setup` | Interactive config setup (generates `~/.myclaw/config.json`) |
+| `make status` | Show aevitas status |
+| `make setup` | Interactive config setup (generates `~/.aevitas/config.json`) |
 | `make skills-list` | List installed skills |
 | `make skills-install [name]` | Install skill(s) (name or all) |
 | `make skills-update [name]` | Update skill(s) (name or all) |
@@ -124,7 +124,7 @@ RPC Flow (Skill → Cron):
 ## Project Structure
 
 ```
-cmd/myclaw/          CLI entry point (agent, gateway, onboard, status)
+cmd/aevitas/          CLI entry point (agent, gateway, onboard, status)
 internal/
   bus/               Message bus (inbound/outbound channels)
   channel/           Channel interface + Telegram + Feishu + WeCom implementations
@@ -133,11 +133,7 @@ internal/
   gateway/           Gateway orchestration (bus + runtime + channels + RPC)
   heartbeat/         Periodic heartbeat service
   rpc/               WebSocket RPC server + cron handlers
-skills/
-  browser/           Browser automation skill (Playwright)
-  flight-monitor/    Flight price monitoring skill
-  todoist/           Task & cron management skill (uses RPC gateway)
-  skill-creator/     Skill scaffolding guide
+skills/              Skill packages (see skills/README.md)
 docs/
   telegram-setup.md  Telegram bot setup guide
   feishu-setup.md    Feishu bot setup guide
@@ -151,12 +147,12 @@ workspace/
 
 ## Configuration
 
-Run `make setup` for interactive config, or copy `config.example.json` to `~/.myclaw/config.json`:
+Run `make setup` for interactive config, or copy `config.example.json` to `~/.aevitas/config.json`:
 
 ```json
 {
   "agent": {
-    "workspace": "~/.myclaw/workspace",
+    "workspace": "~/.aevitas/workspace",
     "model": "claude-sonnet-4-5-20250929",
     "maxTokens": 8192,
     "temperature": 0.7,
@@ -228,7 +224,7 @@ Run `make setup` for interactive config, or copy `config.example.json` to `~/.my
 
 | Type | Config | Env Vars |
 |------|--------|----------|
-| `anthropic` (default) | `"type": "anthropic"` | `MYCLAW_API_KEY`, `ANTHROPIC_API_KEY` |
+| `anthropic` (default) | `"type": "anthropic"` | `AEVITAS_API_KEY`, `ANTHROPIC_API_KEY` |
 | `openai` | `"type": "openai"` | `OPENAI_API_KEY` |
 
 When using OpenAI, set the model to an OpenAI model name (e.g., `gpt-4o`).
@@ -237,16 +233,16 @@ When using OpenAI, set the model to an OpenAI model name (e.g., `gpt-4o`).
 
 | Variable | Description |
 |----------|-------------|
-| `MYCLAW_API_KEY` | API key (any provider) |
+| `AEVITAS_API_KEY` | API key (any provider) |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `OPENAI_API_KEY` | OpenAI API key (auto-sets type to openai) |
-| `MYCLAW_BASE_URL` | Custom API base URL |
-| `MYCLAW_TELEGRAM_TOKEN` | Telegram bot token |
-| `MYCLAW_FEISHU_APP_ID` | Feishu app ID |
-| `MYCLAW_FEISHU_APP_SECRET` | Feishu app secret |
-| `MYCLAW_WECOM_TOKEN` | WeCom intelligent bot callback token |
-| `MYCLAW_WECOM_ENCODING_AES_KEY` | WeCom intelligent bot callback EncodingAESKey |
-| `MYCLAW_WECOM_RECEIVE_ID` | Optional receive ID for strict decrypt validation |
+| `AEVITAS_BASE_URL` | Custom API base URL |
+| `AEVITAS_TELEGRAM_TOKEN` | Telegram bot token |
+| `AEVITAS_FEISHU_APP_ID` | Feishu app ID |
+| `AEVITAS_FEISHU_APP_SECRET` | Feishu app secret |
+| `AEVITAS_WECOM_TOKEN` | WeCom intelligent bot callback token |
+| `AEVITAS_WECOM_ENCODING_AES_KEY` | WeCom intelligent bot callback EncodingAESKey |
+| `AEVITAS_WECOM_RECEIVE_ID` | Optional receive ID for strict decrypt validation |
 
 > Prefer environment variables over config files for sensitive values like API keys.
 
@@ -258,7 +254,7 @@ See [docs/telegram-setup.md](docs/telegram-setup.md) for detailed setup guide.
 
 Quick steps:
 1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram
-2. Set `token` in config or `MYCLAW_TELEGRAM_TOKEN` env var
+2. Set `token` in config or `AEVITAS_TELEGRAM_TOKEN` env var
 3. Run `make gateway`
 
 ### Feishu (Lark)
@@ -281,7 +277,7 @@ See [docs/wecom-setup.md](docs/wecom-setup.md) for detailed setup guide.
 Quick steps:
 1. Create a WeCom intelligent bot in API mode and get `token`, `encodingAESKey`
 2. Configure callback URL: `https://your-domain/wecom/bot`
-3. Set `token` and `encodingAESKey` in both WeCom console and myclaw config
+3. Set `token` and `encodingAESKey` in both WeCom console and aevitas config
 4. Optionally set `receiveId` if you need strict decrypt receive-id validation
 5. Optional: set `allowFrom` to your user ID(s) as whitelist (if unset/empty, inbound from all users is allowed)
 6. Run `make gateway`
@@ -296,16 +292,16 @@ WeCom notes:
 ### Build and Run
 
 ```bash
-docker build -t myclaw .
+docker build -t aevitas .
 
 docker run -d \
-  -e MYCLAW_API_KEY=your-api-key \
-  -e MYCLAW_TELEGRAM_TOKEN=your-token \
+  -e AEVITAS_API_KEY=your-api-key \
+  -e AEVITAS_TELEGRAM_TOKEN=your-token \
   -p 18790:18790 \
   -p 9876:9876 \
   -p 9886:9886 \
-  -v myclaw-data:/root/.myclaw \
-  myclaw
+  -v aevitas-data:/root/.aevitas \
+  aevitas
 ```
 
 ### Docker Compose
@@ -322,7 +318,7 @@ docker compose up -d
 docker compose --profile tunnel up -d
 
 # View logs
-docker compose logs -f myclaw
+docker compose logs -f aevitas
 ```
 
 ### Cloudflared Tunnel
@@ -342,7 +338,7 @@ Set the output URL + `/feishu/webhook` as your Feishu event subscription URL.
 
 ## Security
 
-- `~/.myclaw/config.json` is set to `chmod 600` (owner read/write only)
+- `~/.aevitas/config.json` is set to `chmod 600` (owner read/write only)
 - `.gitignore` excludes `config.json`, `.env`, and workspace memory files
 - Use environment variables for sensitive values in CI/CD and production
 - Never commit real API keys or tokens to version control
@@ -364,7 +360,7 @@ make lint            # Run golangci-lint
 | internal/config | 91.2% |
 | internal/channel | 90.5% |
 | internal/gateway | 90.2% |
-| cmd/myclaw | 82.3% |
+| cmd/aevitas | 82.3% |
 
 ## License
 

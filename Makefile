@@ -1,15 +1,15 @@
 .PHONY: build run gateway tunnel test setup clean docker-up docker-down lint prod start stop restart
 
-BINARY    := myclaw
+BINARY    := aevitas
 BUILD_DIR := .
-CONFIG    := $(HOME)/.myclaw/config.json
+CONFIG    := $(HOME)/.aevitas/config.json
 FEISHU_PORT ?= 9876
-INSTALL_DIR := $(HOME)/.myclaw/bin
+INSTALL_DIR := $(HOME)/.aevitas/bin
 SCRIPT_DIR := scripts
 
 ## Build
 build:
-	go build -o $(BINARY) ./cmd/myclaw
+	go build -o $(BINARY) ./cmd/aevitas
 
 ## Run agent REPL
 run: build
@@ -94,10 +94,10 @@ prod:
 	@echo "Tidying dependencies..."
 	@go mod tidy
 	@$(MAKE) build
-	@echo "Installing myclaw to $(INSTALL_DIR)..."
+	@echo "Installing aevitas to $(INSTALL_DIR)..."
 	@mkdir -p $(INSTALL_DIR)
 	@cp $(BINARY) $(INSTALL_DIR)/$(BINARY)
-	@echo "✓ myclaw installed to $(INSTALL_DIR)/$(BINARY)"
+	@echo "✓ aevitas installed to $(INSTALL_DIR)/$(BINARY)"
 	@echo "Use 'make start' or 'scripts/start.sh' to start in background"
 
 ## Start gateway in background (production mode)
@@ -152,16 +152,16 @@ lint:
 
 ## Help
 help:
-	@echo "myclaw Makefile targets:"
+	@echo "aevitas Makefile targets:"
 	@echo ""
 	@echo "Core:"
 	@echo "  build            Build binary"
 	@echo "  run              Run agent REPL"
 	@echo "  gateway          Start gateway (channels + cron + heartbeat)"
 	@echo "  onboard          Initialize config and workspace"
-	@echo "  status           Show myclaw status"
+	@echo "  status           Show aevitas status"
 	@echo "  setup            Interactive config setup"
-	@echo "  prod             Build and install to ~/.myclaw/bin/"
+	@echo "  prod             Build and install to ~/.aevitas/bin/"
 	@echo ""
 	@echo "Production Control:"
 	@echo "  start            Start gateway in background"

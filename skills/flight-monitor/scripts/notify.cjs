@@ -1,6 +1,6 @@
 'use strict';
 /**
- * notify.cjs — Real-time progress notifications via myclaw gateway WebSocket RPC.
+ * notify.cjs — Real-time progress notifications via aevitas gateway WebSocket RPC.
  *
  * Sends a notify.send RPC call over WebSocket so the gateway can forward
  * the message to Telegram (or whichever channel is configured) while the
@@ -8,7 +8,7 @@
  *
  * Requires:
  *   - Node.js 21+ (uses the built-in global WebSocket — no npm packages needed)
- *   - myclaw gateway running on the port configured in ~/.myclaw/config.json
+ *   - aevitas gateway running on the port configured in ~/.aevitas/config.json
  *   - notify.send registered on the gateway (internal/rpc/notify.go)
  *
  * Wire protocol:
@@ -23,10 +23,10 @@ const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
 
-/** Read gateway URL and Telegram chatId from ~/.myclaw/config.json. */
+/** Read gateway URL and Telegram chatId from ~/.aevitas/config.json. */
 function loadConfig() {
   try {
-    const raw    = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.myclaw', 'config.json'), 'utf8'));
+    const raw    = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.aevitas', 'config.json'), 'utf8'));
     const host   = raw?.gateway?.host ?? '127.0.0.1';
     const port   = raw?.gateway?.port ?? 18790;
     // Bind address 0.0.0.0 means "all interfaces" — connect via loopback.

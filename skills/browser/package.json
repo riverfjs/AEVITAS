@@ -1,5 +1,5 @@
 {
-  "name": "myclaw-browser-skill",
+  "name": "aevitas-browser-skill",
   "version": "2.0.0",
   "description": "Browser automation skill using Playwright",
   "dependencies": {

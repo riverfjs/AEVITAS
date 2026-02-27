@@ -1,9 +1,9 @@
 #!/bin/bash
-# Restart myclaw gateway
+# Restart aevitas gateway
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Restarting myclaw gateway..."
+echo "Restarting aevitas gateway..."
 
 # Stop if running
 "$SCRIPT_DIR/stop.sh"

@@ -15,8 +15,8 @@ import (
 	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	telegramify "github.com/riverfjs/telegramify-go"
-	"github.com/stellarlinkco/myclaw/internal/bus"
-	"github.com/stellarlinkco/myclaw/internal/config"
+	"github.com/riverfjs/aevitas/internal/bus"
+	"github.com/riverfjs/aevitas/internal/config"
 )
 
 const telegramChannelName = "telegram"
@@ -241,7 +241,7 @@ func (t *TelegramChannel) downloadFile(fileID, prefix string) (string, error) {
 	}
 
 	// Create temp directory
-	tempDir := filepath.Join(os.TempDir(), "myclaw-telegram-media")
+	tempDir := filepath.Join(os.TempDir(), "aevitas-telegram-media")
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return "", fmt.Errorf("create temp dir: %w", err)
 	}
@@ -348,8 +348,8 @@ func (t *TelegramChannel) sendMediaFile(chatID int64, filePath string) error {
 		}
 	} else {
 		// Send as document using FileBytes so the display name is always the
-		// symlink name (e.g. "myclaw.log") rather than the symlink target
-		// (e.g. "myclaw-20260224.log") which tgbotapi.FilePath would resolve.
+		// symlink name (e.g. "aevitas.log") rather than the symlink target
+		// (e.g. "aevitas-20260224.log") which tgbotapi.FilePath would resolve.
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return fmt.Errorf("read file for telegram: %w", err)

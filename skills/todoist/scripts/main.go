@@ -40,7 +40,7 @@ func main() {
 		fatalf("could not determine home directory: %v", err)
 	}
 
-	skillRoot := filepath.Join(homeDir, ".myclaw/workspace/.claude/skills/todoist")
+	skillRoot := filepath.Join(homeDir, ".aevitas/workspace/.claude/skills/todoist")
 	dataPath := filepath.Join(skillRoot, "data/tasks.json")
 	cfgPath := filepath.Join(skillRoot, "config.json")
 
@@ -266,7 +266,7 @@ func fatalf(format string, a ...interface{}) {
 }
 
 func printUsage() {
-	fmt.Print(`Todoist — task management + cron scheduling via myclaw gateway
+	fmt.Print(`Todoist — task management + cron scheduling via aevitas gateway
 
 Task commands:
   todoist add <description> [--due YYYY-MM-DD]   Add a task
@@ -275,7 +275,7 @@ Task commands:
   todoist delete <id>                             Delete a task
   todoist reminders                               Show overdue tasks
 
-Cron commands (WebSocket RPC → myclaw gateway ws://127.0.0.1:18790):
+Cron commands (WebSocket RPC → aevitas gateway ws://127.0.0.1:18790):
   todoist cron-add <name> <command> <ms>          Add recurring job
   todoist cron-list                               List all cron jobs
   todoist cron-delete <id>                        Delete a cron job
@@ -286,7 +286,7 @@ Intervals:
 
 Examples:
   todoist add "Book flights" --due 2026-04-01
-  todoist cron-add "Flight Monitor" "bash ~/.myclaw/.../monitor.sh check-all" 21600000
+  todoist cron-add "Flight Monitor" "bash ~/.aevitas/.../monitor.sh check-all" 21600000
   todoist cron-run flight-monitor-auto
   todoist cron-list
 `)

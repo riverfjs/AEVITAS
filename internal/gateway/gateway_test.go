@@ -12,11 +12,11 @@ import (
 	"github.com/riverfjs/agentsdk-go/pkg/api"
 	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 	"go.uber.org/zap"
-	"github.com/stellarlinkco/myclaw/internal/bus"
-	"github.com/stellarlinkco/myclaw/internal/channel"
-	"github.com/stellarlinkco/myclaw/internal/config"
-	"github.com/stellarlinkco/myclaw/internal/cron"
-	"github.com/stellarlinkco/myclaw/internal/heartbeat"
+	"github.com/riverfjs/aevitas/internal/bus"
+	"github.com/riverfjs/aevitas/internal/channel"
+	"github.com/riverfjs/aevitas/internal/config"
+	"github.com/riverfjs/aevitas/internal/cron"
+	"github.com/riverfjs/aevitas/internal/heartbeat"
 )
 
 // newTestLogger returns a no-op logger for unit tests.

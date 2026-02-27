@@ -1,6 +1,6 @@
 package main
 
-// gateway.go — WebSocket RPC client for myclaw gateway.
+// gateway.go — WebSocket RPC client for aevitas gateway.
 // Wire protocol mirrors openclaw:
 //   req: { "type":"req", "id":"<id>", "method":"<name>", "params":<any> }
 //   res: { "type":"res", "id":"<id>", "ok":<bool>, "payload":<any>, "error":{...} }

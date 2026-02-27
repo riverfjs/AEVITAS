@@ -11,8 +11,8 @@ import (
 	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	telegramify "github.com/riverfjs/telegramify-go"
-	"github.com/stellarlinkco/myclaw/internal/bus"
-	"github.com/stellarlinkco/myclaw/internal/config"
+	"github.com/riverfjs/aevitas/internal/bus"
+	"github.com/riverfjs/aevitas/internal/config"
 )
 
 // ===== Telegram MessageEntity 转换测试 =====

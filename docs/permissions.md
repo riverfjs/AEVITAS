@@ -1,11 +1,11 @@
 # Permission System
 
-`myclaw` uses agentsdk-go's permission system to control tool access via `.claude/settings.json`.
+`aevitas` uses agentsdk-go's permission system to control tool access via `.claude/settings.json`.
 
 ## Configuration Location
 
 ```
-~/.myclaw/workspace/.claude/settings.json
+~/.aevitas/workspace/.claude/settings.json
 ```
 
 ## Format
@@ -89,7 +89,7 @@
 ### `ask` (Future Support)
 - Tool execution requires **user confirmation**
 - Use for potentially dangerous operations
-- Currently not fully implemented in myclaw
+- Currently not fully implemented in aevitas
 
 ### `deny`
 - Tools are **blocked** completely
@@ -132,7 +132,7 @@ When rules conflict:
 
 4. **Sandbox Disabled**: With `"sandbox": {"enabled": false}`, permissions are **ignored**
    - Only Validator rules apply
-   - This is the current myclaw default
+   - This is the current aevitas default
 
 ## Recommended Starter Config
 

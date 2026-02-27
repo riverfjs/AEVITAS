@@ -11,7 +11,7 @@ import (
 
 	"github.com/riverfjs/agentsdk-go/pkg/api"
 	"github.com/spf13/cobra"
-	"github.com/stellarlinkco/myclaw/internal/config"
+	"github.com/riverfjs/aevitas/internal/config"
 )
 
 func TestWriteIfNotExists_NewFile(t *testing.T) {
@@ -89,8 +89,8 @@ func TestBuildSystemPrompt_NoFiles(t *testing.T) {
 
 func TestDefaultConstants(t *testing.T) {
 	// Verify default constants are exported in embedded strings
-	if !strings.Contains(defaultAgentsMD, "myclaw") {
-		t.Error("defaultAgentsMD should mention myclaw")
+	if !strings.Contains(defaultAgentsMD, "aevitas") {
+		t.Error("defaultAgentsMD should mention aevitas")
 	}
 	if !strings.Contains(defaultSoulMD, "assistant") {
 		t.Error("defaultSoulMD should mention assistant")
@@ -104,7 +104,7 @@ func TestRunOnboard(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -128,13 +128,13 @@ func TestRunOnboard(t *testing.T) {
 	}
 
 	// Check config was created
-	cfgPath := filepath.Join(tmpDir, ".myclaw", "config.json")
+	cfgPath := filepath.Join(tmpDir, ".aevitas", "config.json")
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 		t.Error("config file was not created")
 	}
 
 	// Check workspace was created
-	wsPath := filepath.Join(tmpDir, ".myclaw", "workspace")
+	wsPath := filepath.Join(tmpDir, ".aevitas", "workspace")
 	if _, err := os.Stat(wsPath); os.IsNotExist(err) {
 		t.Error("workspace was not created")
 	}
@@ -152,12 +152,12 @@ func TestRunOnboard_AlreadyExists(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Create existing config
-	cfgDir := filepath.Join(tmpDir, ".myclaw")
+	cfgDir := filepath.Join(tmpDir, ".aevitas")
 	os.MkdirAll(cfgDir, 0755)
 	os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte("{}"), 0644)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -193,7 +193,7 @@ func TestRunStatus(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -241,7 +241,7 @@ func TestRunStatus_WithAPIKey(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Set API key
-	t.Setenv("MYCLAW_API_KEY", "sk-ant-test-key-12345678")
+	t.Setenv("AEVITAS_API_KEY", "sk-ant-test-key-12345678")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -277,7 +277,7 @@ func TestRunStatus_WithShortAPIKey(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Set short API key (< 8 chars)
-	t.Setenv("MYCLAW_API_KEY", "short")
+	t.Setenv("AEVITAS_API_KEY", "short")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -313,12 +313,12 @@ func TestRunStatus_WithWorkspace(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Create workspace with memory
-	wsDir := filepath.Join(tmpDir, ".myclaw", "workspace", "memory")
+	wsDir := filepath.Join(tmpDir, ".aevitas", "workspace", "memory")
 	os.MkdirAll(wsDir, 0755)
 	os.WriteFile(filepath.Join(wsDir, "MEMORY.md"), []byte("test memory content"), 0644)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -354,12 +354,12 @@ func TestRunStatus_WorkspaceNotFound(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Create config with non-existent workspace
-	cfgDir := filepath.Join(tmpDir, ".myclaw")
+	cfgDir := filepath.Join(tmpDir, ".aevitas")
 	os.MkdirAll(cfgDir, 0755)
 	os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(`{"agent":{"workspace":"/nonexistent"}}`), 0644)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -420,7 +420,7 @@ func TestRunAgent_NoAPIKey(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -441,7 +441,7 @@ func TestRunGateway_NoAPIKey(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -462,12 +462,12 @@ func TestRunStatus_EmptyMemory(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Create workspace with empty memory
-	wsDir := filepath.Join(tmpDir, ".myclaw", "workspace", "memory")
+	wsDir := filepath.Join(tmpDir, ".aevitas", "workspace", "memory")
 	os.MkdirAll(wsDir, 0755)
 	os.WriteFile(filepath.Join(wsDir, "MEMORY.md"), []byte(""), 0644)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -525,7 +525,7 @@ func TestRunAgentWithOptions_SingleMessage(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -568,7 +568,7 @@ func TestRunAgentWithOptions_REPLMode(t *testing.T) {
 	defer os.Setenv("HOME", origHome)
 
 	// Clear API key env vars
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -599,7 +599,7 @@ func TestRunAgentWithOptions_REPLMode(t *testing.T) {
 		t.Errorf("runAgentWithOptions error: %v", err)
 	}
 
-	if !strings.Contains(stdout.String(), "myclaw agent") {
+	if !strings.Contains(stdout.String(), "aevitas agent") {
 		t.Errorf("expected REPL welcome message, got: %s", stdout.String())
 	}
 
@@ -614,7 +614,7 @@ func TestRunAgentWithOptions_REPLMode_EmptyInput(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -650,7 +650,7 @@ func TestRunAgentWithOptions_REPLMode_Error(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -689,7 +689,7 @@ func TestRunAgentWithOptions_SingleMessage_Error(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")
@@ -720,7 +720,7 @@ func TestRunAgentWithOptions_NilResult(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", origHome)
 
-	t.Setenv("MYCLAW_API_KEY", "")
+	t.Setenv("AEVITAS_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("OPENAI_API_KEY", "")

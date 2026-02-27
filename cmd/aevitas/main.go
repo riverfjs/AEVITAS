@@ -14,10 +14,10 @@ import (
 	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 	"github.com/riverfjs/agentsdk-go/pkg/model"
 	"github.com/spf13/cobra"
-	"github.com/stellarlinkco/myclaw/internal/config"
-	"github.com/stellarlinkco/myclaw/internal/gateway"
-	"github.com/stellarlinkco/myclaw/internal/logger"
-	"github.com/stellarlinkco/myclaw/pkg/utils"
+	"github.com/riverfjs/aevitas/internal/config"
+	"github.com/riverfjs/aevitas/internal/gateway"
+	"github.com/riverfjs/aevitas/internal/logger"
+	"github.com/riverfjs/aevitas/pkg/utils"
 )
 
 // Runtime interface for agent runtime (allows mocking in tests)
@@ -45,7 +45,7 @@ type RuntimeFactory func(cfg *config.Config) (Runtime, error)
 // DefaultRuntimeFactory creates the default agentsdk-go runtime
 func DefaultRuntimeFactory(cfg *config.Config) (Runtime, error) {
 	if cfg.Provider.APIKey == "" {
-		return nil, fmt.Errorf("API key not set. Run 'myclaw onboard' or set MYCLAW_API_KEY / ANTHROPIC_API_KEY")
+		return nil, fmt.Errorf("API key not set. Run 'aevitas onboard' or set AEVITAS_API_KEY / ANTHROPIC_API_KEY")
 	}
 
 	// 初始化 logger
@@ -103,8 +103,8 @@ type AgentOptions struct {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "myclaw",
-	Short: "myclaw - personal AI assistant",
+	Use:   "aevitas",
+	Short: "aevitas - personal AI assistant",
 }
 
 var agentCmd = &cobra.Command{
@@ -127,7 +127,7 @@ var onboardCmd = &cobra.Command{
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show myclaw status",
+	Short: "Show aevitas status",
 	RunE:  runStatus,
 }
 
@@ -242,7 +242,7 @@ func runAgentWithOptions(opts AgentOptions) error {
 	}
 
 	// REPL mode
-	fmt.Fprintln(stdout, "myclaw agent (type 'exit' to quit)")
+	fmt.Fprintln(stdout, "aevitas agent (type 'exit' to quit)")
 	scanner := bufio.NewScanner(stdin)
 	for {
 		fmt.Fprint(stdout, "\n> ")
@@ -279,7 +279,7 @@ func runGateway(cmd *cobra.Command, args []string) error {
 	}
 
 	if cfg.Provider.APIKey == "" {
-		return fmt.Errorf("API key not set. Run 'myclaw onboard' or set MYCLAW_API_KEY / ANTHROPIC_API_KEY")
+		return fmt.Errorf("API key not set. Run 'aevitas onboard' or set AEVITAS_API_KEY / ANTHROPIC_API_KEY")
 	}
 
 	gw, err := gateway.New(cfg)
@@ -332,8 +332,8 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Workspace ready: %s\n", ws)
 	fmt.Println("\nNext steps:")
 	fmt.Printf("  1. Edit %s to set your API key\n", cfgPath)
-	fmt.Println("  2. Or set MYCLAW_API_KEY environment variable")
-	fmt.Println("  3. Run 'myclaw agent -m \"Hello\"' to test")
+	fmt.Println("  2. Or set AEVITAS_API_KEY environment variable")
+	fmt.Println("  3. Run 'aevitas agent -m \"Hello\"' to test")
 
 	return nil
 }
@@ -362,7 +362,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("WeCom: enabled=%v\n", cfg.Channels.WeCom.Enabled)
 
 	if _, err := os.Stat(cfg.Agent.Workspace); err != nil {
-		fmt.Println("Workspace: not found (run 'myclaw onboard')")
+		fmt.Println("Workspace: not found (run 'aevitas onboard')")
 	} else {
 		// Check MEMORY.md at workspace root
 		memPath := filepath.Join(cfg.Agent.Workspace, "MEMORY.md")
@@ -407,9 +407,9 @@ func writeIfNotExists(path, content string) {
 }
 
 
-const defaultAgentsMD = `# myclaw Agent
+const defaultAgentsMD = `# aevitas Agent
 
-You are myclaw, a personal AI assistant.
+You are aevitas, a personal AI assistant.
 
 You have access to tools for file operations, web search, and command execution.
 Use them to help the user accomplish tasks.
@@ -540,7 +540,7 @@ func runSkillsVerify(cmd *cobra.Command, args []string) error {
 	}
 	
 	if hasIssues {
-		fmt.Println("\nRun 'myclaw skills install' to fix issues.")
+		fmt.Println("\nRun 'aevitas skills install' to fix issues.")
 		return fmt.Errorf("skill verification failed")
 	}
 	

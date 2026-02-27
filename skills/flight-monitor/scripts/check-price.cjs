@@ -19,7 +19,7 @@
  * }
  */
 
-const PLAYWRIGHT = '/Users/fanjinsong/.myclaw/workspace/.claude/skills/browser/node_modules/playwright-core';
+const PLAYWRIGHT = '/Users/fanjinsong/.aevitas/workspace/.claude/skills/browser/node_modules/playwright-core';
 const { chromium } = require(PLAYWRIGHT);
 
 const args = Object.fromEntries(
