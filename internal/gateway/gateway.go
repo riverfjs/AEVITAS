@@ -181,7 +181,9 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 			if len(event.RecentCalls) > 0 {
 				params := event.RecentCalls[0].Params
 				if params != "" && params != "{}" {
-					msg += fmt.Sprintf(": %s", params)
+					if rendered := formatProgressParams(params); rendered != "" {
+						msg += "\n" + rendered
+					}
 				}
 			}
 
@@ -730,6 +732,14 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+func formatProgressParams(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" {
+		return ""
+	}
+	return "```text\n" + raw + "\n```"
 }
 
 // detectMimeType detects MIME type from file extension
