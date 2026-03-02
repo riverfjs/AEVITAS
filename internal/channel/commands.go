@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/riverfjs/aevitas/internal/bus"
+	"github.com/riverfjs/aevitas/internal/usagehud"
 	"github.com/riverfjs/aevitas/pkg/utils"
+	"github.com/riverfjs/agentsdk-go/pkg/api"
 )
 
 // SessionResetter is an interface for clearing sessions
@@ -17,17 +19,24 @@ type SessionResetter interface {
 	ClearSession(sessionID string) error
 }
 
+type UsageReporter interface {
+	GetSessionStats(sessionID string) *api.SessionTokenStats
+	GetTotalStats() *api.SessionTokenStats
+}
+
 // CommandHandler handles special commands before they reach the agent
 type CommandHandler struct {
-	runtime   SessionResetter // Runtime for session management
-	workspace string          // Workspace path for listing skills
+	runtime             SessionResetter // Runtime for session management
+	workspace           string          // Workspace path for listing skills
+	contextWindowTokens int
 }
 
 // NewCommandHandler creates a new command handler
-func NewCommandHandler(runtime SessionResetter, workspace string) *CommandHandler {
+func NewCommandHandler(runtime SessionResetter, workspace string, contextWindowTokens int) *CommandHandler {
 	return &CommandHandler{
-		runtime:   runtime,
-		workspace: workspace,
+		runtime:             runtime,
+		workspace:           workspace,
+		contextWindowTokens: contextWindowTokens,
 	}
 }
 
@@ -36,6 +45,7 @@ type CommandResult struct {
 	Handled  bool     // Whether the command was handled
 	Response string   // Response message to send back
 	Files    []string // File paths to send (e.g., log files)
+	Event    string   // Optional event hint for channel rendering
 }
 
 // HandleCommand processes special commands and returns whether it was handled.
@@ -92,6 +102,16 @@ func (h *CommandHandler) HandleCommand(msg bus.InboundMessage) CommandResult {
 		return CommandResult{
 			Handled: true,
 			Response: h.handleStatus(),
+		}
+	case "/usage":
+		mode := ""
+		if len(parts) > 1 {
+			mode = strings.ToLower(strings.TrimSpace(parts[1]))
+		}
+		return CommandResult{
+			Handled:  true,
+			Response: h.handleUsage(msg.SessionKey(), mode),
+			Event:    "usage_hud",
 		}
 	case "/chatid":
 		return CommandResult{
@@ -155,6 +175,7 @@ Use /skill list to see installed skills
 • /restart - Restart gateway (production only)
 • /logs [lines|all] - Show logs (default 100 lines, max 1000, or "all" for full file)
 • /status - Show gateway status
+• /usage [total] - Show token usage (session or total)
 • /chatid - Show your chat ID
 • /cleanup - Clean temporary screenshot files (requires confirmation)
 
@@ -197,6 +218,31 @@ func (h *CommandHandler) handleSkillList() string {
 	sb.WriteString("\nUse the `Skill` tool to load a skill's documentation, or ask me about what a specific skill can do!")
 
 	return sb.String()
+}
+
+func (h *CommandHandler) handleUsage(sessionKey, mode string) string {
+	reporter, ok := h.runtime.(UsageReporter)
+	if !ok || reporter == nil {
+		return "⚠️ Usage report is not available"
+	}
+
+	stats := reporter.GetSessionStats(sessionKey)
+	title := "📊 Usage (Current Session)"
+	inputTokens := 0
+	if stats != nil {
+		inputTokens = int(stats.TotalInput)
+	}
+	if mode == "total" {
+		stats = reporter.GetTotalStats()
+		title = "📊 Usage (Total)"
+		if stats != nil {
+			inputTokens = int(stats.TotalInput)
+		}
+	}
+	if stats == nil {
+		return "⚠️ Usage data is not available yet"
+	}
+	return usagehud.Format(title, stats, inputTokens, h.contextWindowTokens)
 }
 
 func (h *CommandHandler) handleRestart() string {

@@ -295,6 +295,7 @@ type mockTelegramBot struct {
 	updatesChan chan tgbotapi.Update
 	stopped     bool
 	sentMsgs    []tgbotapi.Chattable
+	edited      []tgbotapi.EditMessageTextConfig
 	sendErr     error
 	self        tgbotapi.User
 }
@@ -315,11 +316,22 @@ func (m *mockTelegramBot) StopReceivingUpdates() {
 }
 
 func (m *mockTelegramBot) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	if edit, ok := c.(tgbotapi.EditMessageTextConfig); ok {
+		m.edited = append(m.edited, edit)
+	}
 	m.sentMsgs = append(m.sentMsgs, c)
 	if m.sendErr != nil {
 		return tgbotapi.Message{}, m.sendErr
 	}
 	return tgbotapi.Message{MessageID: 1}, nil
+}
+
+func (m *mockTelegramBot) EditMessageText(chatID int64, messageID int, text string) (tgbotapi.Message, error) {
+	if m.sendErr != nil {
+		return tgbotapi.Message{}, m.sendErr
+	}
+	m.edited = append(m.edited, tgbotapi.NewEditMessageText(chatID, messageID, text))
+	return tgbotapi.Message{MessageID: messageID}, nil
 }
 
 func (m *mockTelegramBot) GetSelf() tgbotapi.User {
@@ -434,6 +446,286 @@ func TestTelegramChannel_Send_WithMermaid(t *testing.T) {
 	}
 
 	t.Logf("Sent %d messages (includes mermaid content)", len(mockBot.sentMsgs))
+}
+
+func TestTelegramChannel_Send_PreviewUpdateThenFinal(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "partial",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewUpdate},
+	})
+	if err != nil {
+		t.Fatalf("update preview error: %v", err)
+	}
+	if len(mockBot.sentMsgs) != 2 {
+		t.Fatalf("expected first preview to create tool+draft blocks, got %d", len(mockBot.sentMsgs))
+	}
+
+	err = ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "final text",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewFinal},
+	})
+	if err != nil {
+		t.Fatalf("final preview error: %v", err)
+	}
+	if len(mockBot.edited) < 1 {
+		t.Fatalf("expected final preview to edit draft block, got %d edits", len(mockBot.edited))
+	}
+}
+
+func TestTelegramChannel_Send_PreviewUpdateEditsExisting(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	first := bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "chunk-1",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewUpdate},
+	}
+	second := bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "chunk-1 chunk-2",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewUpdate},
+	}
+	if err := ch.Send(first); err != nil {
+		t.Fatalf("first preview send: %v", err)
+	}
+	if err := ch.Send(second); err != nil {
+		t.Fatalf("second preview send: %v", err)
+	}
+	if len(mockBot.edited) < 1 {
+		t.Fatalf("expected at least one draft edit for second preview, got %d", len(mockBot.edited))
+	}
+}
+
+func TestRenderDraftText_HandlesUnclosedMarkdown(t *testing.T) {
+	got := renderDraftText("**bold")
+	if got == "" {
+		t.Fatal("expected non-empty rendered draft text")
+	}
+	if strings.Contains(got, "**") {
+		t.Fatalf("expected markdown markers removed in draft render, got %q", got)
+	}
+}
+
+func TestTelegramChannel_Send_PreviewFinalCodeBlockUsesFinalizePipeline(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "draft text",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewUpdate},
+	}); err != nil {
+		t.Fatalf("preview update failed: %v", err)
+	}
+
+	finalContent := "最终代码如下：\n```go\npackage main\nfunc main(){}\n```"
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  finalContent,
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewFinal},
+	}); err != nil {
+		t.Fatalf("preview final failed: %v", err)
+	}
+
+	// Finalize pipeline should at least edit preview and send extra content (text/file).
+	if len(mockBot.edited) == 0 {
+		t.Fatalf("expected at least one preview edit during finalization")
+	}
+	if len(mockBot.sentMsgs) < 1 {
+		t.Fatalf("expected at least one send call, got %d", len(mockBot.sentMsgs))
+	}
+}
+
+func TestTelegramChannel_Send_ToolProgressCreatesAndKeepsToolBlocks(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	// First progress message creates tool+draft blocks and updates tool block.
+	if err := ch.Send(bus.OutboundMessage{ChatID: "123", Content: "⏳ WebSearch"}); err != nil {
+		t.Fatalf("first tool progress failed: %v", err)
+	}
+
+	// Many progress messages should rollover to a new tool block (without dropping old block).
+	for i := 0; i < 80; i++ {
+		long := fmt.Sprintf("⏳ WebFetch %d", i)
+		if err := ch.Send(bus.OutboundMessage{
+			ChatID:  "123",
+			Content: long,
+			Metadata: map[string]any{
+				telegramEventKey: telegramEventToolProgress,
+				"tool_name":      "WebFetch",
+				"tool_params":    fmt.Sprintf(`{"url":"https://example.com/%d","prompt":"%s"}`, i, strings.Repeat("x", 120)),
+			},
+		}); err != nil {
+			t.Fatalf("tool progress #%d failed: %v", i, err)
+		}
+	}
+
+	// Expect at least 3 sends: tool slot + draft slot + rollover tool block.
+	if len(mockBot.sentMsgs) < 3 {
+		t.Fatalf("expected rollover to create new tool block, got %d sends", len(mockBot.sentMsgs))
+	}
+}
+
+func TestTelegramChannel_Send_ToolProgressRendersStructuredSummary(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	msg := bus.OutboundMessage{
+		ChatID:  "123",
+		Content: "⏳ WebSearch",
+		Metadata: map[string]any{
+			telegramEventKey: telegramEventToolProgress,
+			"tool_name":      "WebSearch",
+			"tool_params":    `{"query":"Iran situation March 2026 latest news","url":"https://example.com"}`,
+		},
+	}
+	if err := ch.Send(msg); err != nil {
+		t.Fatalf("tool progress send failed: %v", err)
+	}
+	if len(mockBot.edited) == 0 {
+		t.Fatalf("expected tool block edit")
+	}
+	got := mockBot.edited[len(mockBot.edited)-1].Text
+	if !strings.Contains(got, "WebSearch") {
+		t.Fatalf("expected tool name in rendered block, got %q", got)
+	}
+	if !strings.Contains(got, `"query":"Iran situation March 2026 latest news"`) {
+		t.Fatalf("expected raw json payload in code block style, got %q", got)
+	}
+	if len(mockBot.edited[len(mockBot.edited)-1].Entities) == 0 {
+		t.Fatalf("expected markdown entities on tool block edit")
+	}
+}
+
+func TestTelegramChannel_Send_UsageHUDAfterToolProgress_SendsStandalone(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	// Prepare a turn with preview + tool progress.
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "draft text",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewUpdate},
+	}); err != nil {
+		t.Fatalf("preview update failed: %v", err)
+	}
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:  "123",
+		Content: "⏳ WebSearch",
+		Metadata: map[string]any{
+			telegramEventKey: telegramEventToolProgress,
+			"tool_name":      "WebSearch",
+			"tool_params":    `{"query":"abc"}`,
+		},
+	}); err != nil {
+		t.Fatalf("tool progress failed: %v", err)
+	}
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "final answer",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewFinal},
+	}); err != nil {
+		t.Fatalf("preview final failed: %v", err)
+	}
+
+	beforeEdits := len(mockBot.edited)
+	beforeSent := len(mockBot.sentMsgs)
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "📊 Usage\nTotal billed tokens: 123",
+		Metadata: map[string]any{telegramEventKey: telegramEventUsageHUD},
+	}); err != nil {
+		t.Fatalf("usage hud send failed: %v", err)
+	}
+	if len(mockBot.sentMsgs) <= beforeSent {
+		t.Fatalf("expected usage hud standalone send")
+	}
+	if len(mockBot.edited) != beforeEdits {
+		t.Fatalf("expected usage hud not to edit tool block")
+	}
+}
+
+func TestTelegramChannel_Send_UsageHUDWithoutToolProgress_SendsStandalone(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	beforeSent := len(mockBot.sentMsgs)
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "📊 Usage\nTotal billed tokens: 456",
+		Metadata: map[string]any{telegramEventKey: telegramEventUsageHUD},
+	}); err != nil {
+		t.Fatalf("usage hud send failed: %v", err)
+	}
+	if len(mockBot.sentMsgs) <= beforeSent {
+		t.Fatalf("expected standalone usage hud send")
+	}
+}
+
+func TestTelegramChannel_Send_UsageHUD_WithToolProgress_NoToolBlockEdit(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:  "123",
+		Content: "⏳ WebSearch",
+		Metadata: map[string]any{
+			telegramEventKey: telegramEventToolProgress,
+			"tool_name":      "WebSearch",
+			"tool_params":    `{"query":"abc"}`,
+		},
+	}); err != nil {
+		t.Fatalf("tool progress failed: %v", err)
+	}
+
+	beforeEdits := len(mockBot.edited)
+	beforeSent := len(mockBot.sentMsgs)
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:  "123",
+		Content: "📊 Usage\nTotal billed tokens: 789",
+		Metadata: map[string]any{
+			telegramEventKey: telegramEventUsageHUD,
+		},
+	}); err != nil {
+		t.Fatalf("usage hud html send failed: %v", err)
+	}
+	if len(mockBot.sentMsgs) <= beforeSent {
+		t.Fatalf("expected html usage to send standalone message")
+	}
+	if len(mockBot.edited) != beforeEdits {
+		t.Fatalf("expected usage not to edit tool block")
+	}
 }
 
 // ===== Telegram Start/Stop 测试 =====

@@ -24,6 +24,13 @@
       "enabled": true,
       "reserveTokensFloor": 20000,
       "softThresholdTokens": 4000
+    },
+    "tokenTracking": {
+      "enabled": true
+    },
+    "guard": {
+      "inputEnabled": true,
+      "outputEnabled": true
     }
   },
   "provider": {

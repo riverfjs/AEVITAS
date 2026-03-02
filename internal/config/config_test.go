@@ -36,6 +36,15 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Agent.Workspace == "" {
 		t.Error("workspace should not be empty")
 	}
+	if !cfg.Agent.Guard.InputEnabled {
+		t.Error("guard.inputEnabled should be true by default")
+	}
+	if !cfg.Agent.Guard.OutputEnabled {
+		t.Error("guard.outputEnabled should be true by default")
+	}
+	if !cfg.Agent.TokenTracking.Enabled {
+		t.Error("tokenTracking.enabled should be true by default")
+	}
 }
 
 func TestLoadConfig_NoFile(t *testing.T) {
@@ -78,6 +87,13 @@ func TestLoadConfig_FromFile(t *testing.T) {
 		"agent": map[string]any{
 			"model":     "claude-opus-4-20250514",
 			"maxTokens": 4096,
+			"guard": map[string]any{
+				"inputEnabled":  false,
+				"outputEnabled": true,
+			},
+			"tokenTracking": map[string]any{
+				"enabled": false,
+			},
 		},
 		"provider": map[string]any{
 			"apiKey": "sk-test-key",
@@ -98,6 +114,15 @@ func TestLoadConfig_FromFile(t *testing.T) {
 	}
 	if cfg.Provider.APIKey != "sk-test-key" {
 		t.Errorf("apiKey = %q, want sk-test-key", cfg.Provider.APIKey)
+	}
+	if cfg.Agent.Guard.InputEnabled {
+		t.Error("guard.inputEnabled = true, want false")
+	}
+	if !cfg.Agent.Guard.OutputEnabled {
+		t.Error("guard.outputEnabled = false, want true")
+	}
+	if cfg.Agent.TokenTracking.Enabled {
+		t.Error("tokenTracking.enabled = true, want false")
 	}
 }
 

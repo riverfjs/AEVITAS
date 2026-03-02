@@ -8,13 +8,10 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
-	"github.com/riverfjs/agentsdk-go/pkg/api"
-	"github.com/riverfjs/agentsdk-go/pkg/core/events"
-	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
-	"github.com/riverfjs/agentsdk-go/pkg/model"
 	"github.com/riverfjs/aevitas/internal/bus"
 	"github.com/riverfjs/aevitas/internal/channel"
 	"github.com/riverfjs/aevitas/internal/config"
@@ -22,12 +19,20 @@ import (
 	"github.com/riverfjs/aevitas/internal/heartbeat"
 	"github.com/riverfjs/aevitas/internal/logger"
 	"github.com/riverfjs/aevitas/internal/rpc"
+	"github.com/riverfjs/aevitas/internal/runtimeopts"
+	"github.com/riverfjs/aevitas/internal/usagehud"
+	"github.com/riverfjs/agentsdk-go/pkg/api"
+	"github.com/riverfjs/agentsdk-go/pkg/core/events"
+	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 )
 
 // Runtime interface for agent runtime (allows mocking in tests)
 type Runtime interface {
 	Run(ctx context.Context, req api.Request) (*api.Response, error)
+	RunStream(ctx context.Context, req api.Request) (<-chan api.StreamEvent, error)
 	ClearSession(sessionID string) error
+	GetSessionStats(sessionID string) *api.SessionTokenStats
+	GetTotalStats() *api.SessionTokenStats
 	Close()
 }
 
@@ -40,8 +45,20 @@ func (r *runtimeAdapter) Run(ctx context.Context, req api.Request) (*api.Respons
 	return r.rt.Run(ctx, req)
 }
 
+func (r *runtimeAdapter) RunStream(ctx context.Context, req api.Request) (<-chan api.StreamEvent, error) {
+	return r.rt.RunStream(ctx, req)
+}
+
 func (r *runtimeAdapter) ClearSession(sessionID string) error {
 	return r.rt.ClearSession(sessionID)
+}
+
+func (r *runtimeAdapter) GetSessionStats(sessionID string) *api.SessionTokenStats {
+	return r.rt.GetSessionStats(sessionID)
+}
+
+func (r *runtimeAdapter) GetTotalStats() *api.SessionTokenStats {
+	return r.rt.GetTotalStats()
 }
 
 func (r *runtimeAdapter) Close() {
@@ -67,49 +84,8 @@ func DefaultRuntimeFactory(cfg *config.Config, sysPrompt string, realtimeCallbac
 	}
 	sdkLog := sdklogger.NewZapLogger(zapLogger)
 
-	var provider api.ModelFactory
-	switch cfg.Provider.Type {
-	case "openai":
-		provider = &model.OpenAIProvider{
-			APIKey:    cfg.Provider.APIKey,
-			BaseURL:   cfg.Provider.BaseURL,
-			ModelName: cfg.Agent.Model,
-			MaxTokens: cfg.Agent.MaxTokens,
-		}
-	default: // "anthropic" or empty
-		provider = &model.AnthropicProvider{
-			APIKey:    cfg.Provider.APIKey,
-			BaseURL:   cfg.Provider.BaseURL,
-			ModelName: cfg.Agent.Model,
-			MaxTokens: cfg.Agent.MaxTokens,
-		}
-	}
-
-	rt, err := api.New(context.Background(), api.Options{
-		ProjectRoot:           cfg.Agent.Workspace,
-		ModelFactory:          provider,
-		SystemPrompt:          sysPrompt,
-		MaxIterations:         cfg.Agent.MaxToolIterations,
-		Logger:                sdkLog,
-		HistoryLimit:          cfg.Agent.HistoryLimit,
-		RealtimeEventCallback: realtimeCallback,
-		ProgressInterval:      cfg.Agent.ToolLog.Interval,
-		AutoRecall:            cfg.Agent.AutoRecall,
-		AutoRecallMaxResults:  cfg.Agent.AutoRecallMaxResults,
-		AutoCompact: api.CompactConfig{
-			Enabled:   cfg.Agent.Compaction.Enabled,
-			Threshold: cfg.Agent.Compaction.Threshold,
-		},
-		ContextWindowTokens:        cfg.Agent.ContextWindow.Tokens,
-		ContextWindowWarnRatio:     cfg.Agent.ContextWindow.WarnRatio,
-		ContextWindowHardMinTokens: cfg.Agent.ContextWindow.HardMinTokens,
-		MemoryFlush: api.MemoryFlushConfig{
-			Enabled:             cfg.Agent.MemoryFlush.Enabled,
-			ReserveTokensFloor:  cfg.Agent.MemoryFlush.ReserveTokensFloor,
-			SoftThresholdTokens: cfg.Agent.MemoryFlush.SoftThresholdTokens,
-			Prompt:              cfg.Agent.MemoryFlush.Prompt,
-		},
-	})
+	provider := runtimeopts.NewProvider(cfg)
+	rt, err := api.New(context.Background(), runtimeopts.BuildAPIOptions(cfg, provider, sysPrompt, sdkLog, realtimeCallback))
 	if err != nil {
 		return nil, fmt.Errorf("create runtime: %w", err)
 	}
@@ -131,6 +107,8 @@ type Gateway struct {
 	// Current execution context (for realtime callbacks)
 	currentChannelID string
 	currentChatID    string
+	usageMu          sync.Mutex
+	usageNotified    map[string]uint8
 }
 
 // New creates a Gateway with default options
@@ -146,10 +124,11 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
-	
+
 	g := &Gateway{
-		cfg:    cfg,
-		logger: sdklogger.NewZapLogger(zapLogger),
+		cfg:           cfg,
+		logger:        sdklogger.NewZapLogger(zapLogger),
+		usageNotified: make(map[string]uint8),
 	}
 
 	// Message bus
@@ -194,10 +173,20 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 		if msg == "" {
 			return
 		}
+		meta := map[string]any{}
+		if event.Type == api.RealtimeEventProgressUpdate {
+			meta[telegramEventKey] = telegramEventToolProgress
+			meta["tool_name"] = event.LastTool
+			if len(event.RecentCalls) > 0 {
+				meta["tool_params"] = event.RecentCalls[0].Params
+			}
+			meta["tool_time"] = time.Now().Format(time.RFC3339)
+		}
 		g.bus.Outbound <- bus.OutboundMessage{
-			Channel: g.currentChannelID,
-			ChatID:  g.currentChatID,
-			Content: msg,
+			Channel:  g.currentChannelID,
+			ChatID:   g.currentChatID,
+			Content:  msg,
+			Metadata: meta,
 		}
 		g.logger.Debugf("[gateway] Sent %s event to %s/%s", event.Type, g.currentChannelID, g.currentChatID)
 	}
@@ -272,7 +261,7 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 	}, g.heartbeatNotify, 0, g.logger)
 
 	// Command handler
-	g.cmdHandler = channel.NewCommandHandler(g.runtime, cfg.Agent.Workspace)
+	g.cmdHandler = channel.NewCommandHandler(g.runtime, cfg.Agent.Workspace, cfg.Agent.ContextWindow.Tokens)
 
 	// Channels
 	chMgr, err := channel.NewChannelManager(cfg.Channels, g.bus, g.logger)
@@ -289,6 +278,9 @@ func (g *Gateway) resetSession(sessionID string) error {
 	if err := g.runtime.ClearSession(sessionID); err != nil {
 		return fmt.Errorf("failed to clear session: %w", err)
 	}
+	g.usageMu.Lock()
+	delete(g.usageNotified, sessionID)
+	g.usageMu.Unlock()
 	return nil
 }
 
@@ -357,7 +349,7 @@ func (g *Gateway) start(ctx context.Context) error {
 
 	// Send startup notification
 	g.sendStartupNotification()
-	
+
 	return nil
 }
 
@@ -396,18 +388,23 @@ func (g *Gateway) processLoop(ctx context.Context) {
 			}
 			if cmdResult.Handled {
 				g.logger.Infof("[gateway] command handled: %s", truncate(msg.Content, 40))
-				
+
 				// Stop typing indicator for commands
 				if stopTyping, ok := msg.Metadata["stop_typing"].(chan struct{}); ok {
 					close(stopTyping)
 				}
-				
+
 				if cmdResult.Response != "" || len(cmdResult.Files) > 0 {
+					meta := map[string]any{}
+					if msg.Channel == "telegram" && strings.TrimSpace(cmdResult.Event) != "" {
+						meta[telegramEventKey] = strings.TrimSpace(cmdResult.Event)
+					}
 					g.bus.Outbound <- bus.OutboundMessage{
 						Channel: msg.Channel,
 						ChatID:  msg.ChatID,
 						Content: cmdResult.Response,
 						Media:   cmdResult.Files,
+						Metadata: meta,
 					}
 				}
 				continue
@@ -429,12 +426,12 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 		g.currentChannelID = ""
 		g.currentChatID = ""
 	}()
-	
+
 	// Stop typing indicator when processing completes (deferred)
 	if stopTyping, ok := msg.Metadata["stop_typing"].(chan struct{}); ok {
 		defer close(stopTyping)
 	}
-	
+
 	// Build attachments from media
 	var attachments []api.Attachment
 	for _, mediaPath := range msg.Media {
@@ -446,61 +443,165 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 			MimeType: mimeType,
 		})
 	}
-	
+
 	if len(attachments) > 0 {
 		g.logger.Infof("[gateway] processing %d image(s)", len(attachments))
 	}
 
-	resp, err := g.runtime.Run(ctx, api.Request{
+	req := api.Request{
 		Prompt:      msg.Content,
 		SessionID:   msg.SessionKey(),
 		Attachments: attachments,
-	})
-	
+	}
+
+	// Telegram: prefer stream path with message preview editing.
+	if msg.Channel == "telegram" {
+		if handled := g.processAgentStream(ctx, msg, req); handled {
+			return
+		}
+	}
+
+	resp, err := g.runtime.Run(ctx, req)
 	if err != nil {
-		g.logger.Errorf("[gateway] agent error: %v", err)
-		
-		// Provide user-friendly error messages
-		var errorMsg string
-		if strings.Contains(err.Error(), "max iterations reached") {
-			errorMsg = "抱歉，这个任务太复杂了，我尝试了太多次工具调用。请简化您的请求或分步骤提问。"
-		} else if strings.Contains(err.Error(), "context deadline exceeded") {
-			errorMsg = "抱歉，处理超时了。请稍后再试或简化您的请求。"
-		} else {
-			errorMsg = "抱歉，处理您的消息时遇到了错误。"
-		}
-		
-		g.bus.Outbound <- bus.OutboundMessage{
-			Channel: msg.Channel,
-			ChatID:  msg.ChatID,
-			Content: errorMsg,
-		}
+		g.emitAgentError(msg, err)
 		return
 	}
-	
+	g.deliverAgentResponse(msg, resp, false)
+}
+
+const (
+	telegramEventKey           = "telegram_event"
+	telegramEventPreviewUpdate = "preview_update"
+	telegramEventPreviewFinal  = "preview_final"
+	telegramEventToolProgress  = "tool_progress"
+	telegramEventUsageHUD      = "usage_hud"
+	usageMark30                = 1 << 0
+	usageMark50                = 1 << 1
+	usageMark80                = 1 << 2
+)
+
+func (g *Gateway) processAgentStream(ctx context.Context, msg bus.InboundMessage, req api.Request) bool {
+	stream, err := g.runtime.RunStream(ctx, req)
+	if err != nil {
+		g.logger.Warnf("[gateway] stream unavailable, fallback to non-stream: %v", err)
+		return false
+	}
+
+	var (
+		sb             strings.Builder
+		lastPreviewLen int
+		streamErr      error
+		finalResp      *api.Response
+		previewSent    bool
+	)
+	ticker := time.NewTicker(700 * time.Millisecond)
+	defer ticker.Stop()
+
+	sendPreview := func(mode string, content string) {
+		if content == "" {
+			return
+		}
+		meta := map[string]any{telegramEventKey: mode}
+		g.bus.Outbound <- bus.OutboundMessage{
+			Channel:  msg.Channel,
+			ChatID:   msg.ChatID,
+			Content:  content,
+			Metadata: meta,
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return true
+		case <-ticker.C:
+			cur := sb.String()
+			if cur != "" && len(cur) != lastPreviewLen {
+				sendPreview(telegramEventPreviewUpdate, cur)
+				lastPreviewLen = len(cur)
+				previewSent = true
+			}
+		case evt, ok := <-stream:
+			if !ok {
+				if streamErr != nil {
+					g.emitAgentError(msg, streamErr)
+					return true
+				}
+				if finalResp != nil {
+					g.deliverAgentResponse(msg, finalResp, previewSent)
+					return true
+				}
+				// No final response, fallback to accumulated text if present.
+				raw := strings.TrimSpace(sb.String())
+				if raw != "" {
+					sendPreview(telegramEventPreviewFinal, raw)
+				}
+				return true
+			}
+
+			switch evt.Type {
+			case api.EventError:
+				if s, ok := evt.Output.(string); ok && s != "" {
+					streamErr = fmt.Errorf("%s", s)
+				} else {
+					streamErr = fmt.Errorf("stream error")
+				}
+			case api.EventContentBlockDelta:
+				if evt.Delta != nil && evt.Delta.Type == "text_delta" && evt.Delta.Text != "" {
+					sb.WriteString(evt.Delta.Text)
+				}
+			case api.EventFinalResponse:
+				switch out := evt.Output.(type) {
+				case *api.Response:
+					finalResp = out
+				case api.Response:
+					tmp := out
+					finalResp = &tmp
+				}
+			}
+		}
+	}
+}
+
+func (g *Gateway) emitAgentError(msg bus.InboundMessage, err error) {
+	g.logger.Errorf("[gateway] agent error: %v", err)
+	var errorMsg string
+	if strings.Contains(err.Error(), "max iterations reached") {
+		errorMsg = "抱歉，这个任务太复杂了，我尝试了太多次工具调用。请简化您的请求或分步骤提问。"
+	} else if strings.Contains(err.Error(), "context deadline exceeded") {
+		errorMsg = "抱歉，处理超时了。请稍后再试或简化您的请求。"
+	} else {
+		errorMsg = "抱歉，处理您的消息时遇到了错误。"
+	}
+	g.bus.Outbound <- bus.OutboundMessage{
+		Channel: msg.Channel,
+		ChatID:  msg.ChatID,
+		Content: errorMsg,
+	}
+}
+
+func (g *Gateway) deliverAgentResponse(msg bus.InboundMessage, resp *api.Response, previewSent bool) {
+	if resp == nil {
+		return
+	}
+	defer g.emitTelegramUsageHUD(msg, resp)
+
 	// 构建响应内容（优先级：Commands > Skills > AskUserQuestion > Subagent > Result.Output）
 	var content strings.Builder
-	
-	// 1. Command results（如 /help）
 	for _, cmdRes := range resp.CommandResults {
 		if output, ok := cmdRes.Result.Output.(string); ok && output != "" {
 			content.WriteString(output)
 			content.WriteString("\n\n")
 		}
 	}
-	
-	// 2. Skill results
 	for _, skillRes := range resp.SkillResults {
 		if output, ok := skillRes.Result.Output.(string); ok && output != "" {
-		content.WriteString(output)
-		content.WriteString("\n\n")
+			content.WriteString(output)
+			content.WriteString("\n\n")
+		}
 	}
-}
 
-	// 3 & 4. Process all hook events in one pass
 	hookResult := g.processHookEvents(resp)
-
-	// Send files
 	for _, filePath := range hookResult.sendFiles {
 		g.logger.Infof("[gateway] SendFile detected: %s", filePath)
 		g.bus.Outbound <- bus.OutboundMessage{
@@ -510,45 +611,48 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 		}
 	}
 
-	// AskUserQuestion takes priority and short-circuits
 	if hookResult.askQuestion != "" {
 		g.logger.Infof("[gateway] AskUserQuestion: %s", truncate(hookResult.askQuestion, 60))
+		meta := map[string]any{}
+		if previewSent && msg.Channel == "telegram" {
+			meta[telegramEventKey] = telegramEventPreviewFinal
+		}
 		g.bus.Outbound <- bus.OutboundMessage{
-			Channel: msg.Channel,
-			ChatID:  msg.ChatID,
-			Content: hookResult.askQuestion,
+			Channel:  msg.Channel,
+			ChatID:   msg.ChatID,
+			Content:  hookResult.askQuestion,
+			Metadata: meta,
 		}
 		return
 	}
-	
-	// 4. Subagent result
+
 	if resp.Subagent != nil {
 		if output, ok := resp.Subagent.Output.(string); ok && output != "" {
 			content.WriteString(output)
 			content.WriteString("\n\n")
 		}
 	}
-	
-	// 5. Main agent output
 	if resp.Result != nil && resp.Result.Output != "" {
 		content.WriteString(resp.Result.Output)
 	}
-	
 	result := strings.TrimSpace(content.String())
-	
-	// Send message (without auto-extracting attachments)
+
 	if result != "" {
 		g.logger.Infof("[gateway] outbound to %s/%s: %s", msg.Channel, msg.ChatID, truncate(result, 80))
+		meta := map[string]any{}
+		if previewSent && msg.Channel == "telegram" {
+			meta[telegramEventKey] = telegramEventPreviewFinal
+		}
 		g.bus.Outbound <- bus.OutboundMessage{
-			Channel: msg.Channel,
-			ChatID:  msg.ChatID,
-			Content: result,
+			Channel:  msg.Channel,
+			ChatID:   msg.ChatID,
+			Content:  result,
+			Metadata: meta,
 		}
 	} else if len(hookResult.sendFiles) == 0 {
 		g.logger.Warnf("[gateway] no response generated for %s/%s", msg.Channel, msg.SenderID)
 	}
 
-	// Notify user about memory writes
 	if hookResult.memoryNotice != "" {
 		g.bus.Outbound <- bus.OutboundMessage{
 			Channel: msg.Channel,
@@ -556,6 +660,76 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 			Content: hookResult.memoryNotice,
 		}
 	}
+}
+
+func (g *Gateway) emitTelegramUsageHUD(msg bus.InboundMessage, resp *api.Response) {
+	if msg.Channel != "telegram" || g.runtime == nil {
+		return
+	}
+	contextWindowTokens := 0
+	if g.cfg != nil {
+		contextWindowTokens = g.cfg.Agent.ContextWindow.Tokens
+	}
+	if contextWindowTokens <= 0 || resp == nil || resp.Result == nil {
+		return
+	}
+	input := resp.Result.Usage.InputTokens
+	if input <= 0 {
+		return
+	}
+	ratio := float64(input) / float64(contextWindowTokens)
+	reached := usageThresholdMask(ratio * 100)
+	if reached == 0 {
+		return
+	}
+	sessionID := msg.SessionKey()
+	g.usageMu.Lock()
+	prev := g.usageNotified[sessionID]
+	if reached&^prev == 0 {
+		g.usageMu.Unlock()
+		return
+	}
+	g.usageNotified[sessionID] = prev | reached
+	g.usageMu.Unlock()
+
+	stats := g.runtime.GetSessionStats(msg.SessionKey())
+	if stats == nil {
+		return
+	}
+	content := formatUsageHUD(stats, resp, contextWindowTokens)
+	g.bus.Outbound <- bus.OutboundMessage{
+		Channel: msg.Channel,
+		ChatID:  msg.ChatID,
+		Content: content,
+		Metadata: map[string]any{
+			telegramEventKey: telegramEventUsageHUD,
+		},
+	}
+}
+
+func formatUsageHUD(stats *api.SessionTokenStats, resp *api.Response, contextWindowTokens int) string {
+	if stats == nil {
+		return ""
+	}
+	inputTokens := 0
+	if resp != nil && resp.Result != nil {
+		inputTokens = resp.Result.Usage.InputTokens
+	}
+	return usagehud.Format("📊 Usage", stats, inputTokens, contextWindowTokens)
+}
+
+func usageThresholdMask(percent float64) uint8 {
+	var mask uint8
+	if percent >= 30 {
+		mask |= usageMark30
+	}
+	if percent >= 50 {
+		mask |= usageMark50
+	}
+	if percent >= 80 {
+		mask |= usageMark80
+	}
+	return mask
 }
 
 // hookEventResult holds all data extracted from a single pass over resp.HookEvents.
@@ -669,32 +843,32 @@ func (g *Gateway) sendStartupNotification() {
 		g.logger.Debug("[gateway] no restart trigger file found, skipping startup notification")
 		return
 	}
-	
+
 	// Parse channel:chatID format
 	parts := strings.Split(strings.TrimSpace(string(data)), ":")
 	if len(parts) != 2 {
 		g.logger.Warnf("[gateway] invalid restart trigger format: %s", string(data))
 		return
 	}
-	
+
 	channelName := parts[0]
 	chatID := parts[1]
-	
+
 	// Get PID for status
 	pid := os.Getpid()
-	
+
 	startupMsg := fmt.Sprintf("✅ **Gateway Restarted Successfully**\n\nPID: %d\nTime: %s",
 		pid, time.Now().Format("2006-01-02 15:04:05"))
-	
+
 	g.logger.Infof("[gateway] sending restart notification to %s/%s", channelName, chatID)
-	
+
 	// Send notification
 	g.bus.Outbound <- bus.OutboundMessage{
 		Channel: channelName,
 		ChatID:  chatID,
 		Content: startupMsg,
 	}
-	
+
 	// Clean up trigger file
 	os.Remove(restartTriggerFile)
 }
@@ -758,5 +932,3 @@ func detectMimeType(filePath string) string {
 		return "image/jpeg" // default
 	}
 }
-
-

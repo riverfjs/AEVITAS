@@ -176,6 +176,13 @@ Run `make setup` for interactive config, or copy `config.example.json` to `~/.ae
       "enabled": true,
       "reserveTokensFloor": 20000,
       "softThresholdTokens": 4000
+    },
+    "tokenTracking": {
+      "enabled": true
+    },
+    "guard": {
+      "inputEnabled": true,
+      "outputEnabled": true
     }
   },
   "provider": {
@@ -219,6 +226,11 @@ Run `make setup` for interactive config, or copy `config.example.json` to `~/.ae
   }
 }
 ```
+
+Guard switches:
+- `agent.guard.inputEnabled`: run prompt exfiltration guard before model call
+- `agent.guard.outputEnabled`: redact outputs that appear to leak system prompt content
+- `agent.tokenTracking.enabled`: enable session/total token aggregation and token logs
 
 ### Provider Types
 

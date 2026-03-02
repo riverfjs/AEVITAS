@@ -27,21 +27,21 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	Workspace         string        `json:"workspace"`
-	Model             string        `json:"model"`
-	MaxTokens         int           `json:"maxTokens"`
-	Temperature       float64       `json:"temperature"`
-	MaxToolIterations int           `json:"maxToolIterations"`
+	Workspace         string  `json:"workspace"`
+	Model             string  `json:"model"`
+	MaxTokens         int     `json:"maxTokens"`
+	Temperature       float64 `json:"temperature"`
+	MaxToolIterations int     `json:"maxToolIterations"`
 	// HistoryLimit caps the number of user turns loaded from disk into each
 	// session context. 0 = no limit (all history). Default: 30.
-	HistoryLimit      int           `json:"historyLimit,omitempty"`
+	HistoryLimit int `json:"historyLimit,omitempty"`
 	// ToolLog controls real-time progress log messages sent during agent execution.
-	ToolLog           ToolLogConfig `json:"toolLog,omitempty"`
+	ToolLog ToolLogConfig `json:"toolLog,omitempty"`
 	// AutoRecall enables automatic memory injection before each agent turn.
 	// When true, MEMORY.md is searched with the user's prompt and top results
 	// are prepended to the message as context. Default: true.
-	AutoRecall           bool             `json:"autoRecall,omitempty"`
-	AutoRecallMaxResults int              `json:"autoRecallMaxResults,omitempty"`
+	AutoRecall           bool `json:"autoRecall,omitempty"`
+	AutoRecallMaxResults int  `json:"autoRecallMaxResults,omitempty"`
 	// Compaction controls automatic context-window compaction.
 	Compaction CompactionConfig `json:"compaction,omitempty"`
 	// ContextWindow configures the Context Window Guard.
@@ -52,11 +52,30 @@ type AgentConfig struct {
 	// When enabled, a hidden agent turn runs to write memories to disk when
 	// input tokens approach the context window limit.
 	MemoryFlush MemoryFlushConfig `json:"memoryFlush,omitempty"`
+	// TokenTracking controls SDK token usage aggregation.
+	TokenTracking TokenTrackingConfig `json:"tokenTracking,omitempty"`
+	// Guard controls prompt/output disclosure protections in agentsdk-go.
+	Guard GuardConfig `json:"guard,omitempty"`
+}
+
+type GuardConfig struct {
+	// InputEnabled toggles prompt exfiltration guard before model generation.
+	// Default: true.
+	InputEnabled bool `json:"inputEnabled"`
+	// OutputEnabled toggles output leak redaction after model generation.
+	// Default: true.
+	OutputEnabled bool `json:"outputEnabled"`
+}
+
+type TokenTrackingConfig struct {
+	// Enabled toggles token usage aggregation for session/total stats.
+	// Default: true.
+	Enabled bool `json:"enabled"`
 }
 
 // ToolLogConfig controls periodic tool-call progress messages sent to the chat.
 type ToolLogConfig struct {
-	Enabled  bool `json:"enabled"`           // Whether to send progress messages (default: false)
+	Enabled  bool `json:"enabled"`            // Whether to send progress messages (default: false)
 	Interval int  `json:"interval,omitempty"` // Send a message every N tool calls (default: 5)
 }
 
@@ -161,7 +180,9 @@ func DefaultConfig() *Config {
 			HistoryLimit:      30,
 			ToolLog:           ToolLogConfig{Enabled: false, Interval: 5},
 			AutoRecall:        true,
-			MemoryFlush: MemoryFlushConfig{Enabled: true, ReserveTokensFloor: 20000, SoftThresholdTokens: 4000},
+			MemoryFlush:       MemoryFlushConfig{Enabled: true, ReserveTokensFloor: 20000, SoftThresholdTokens: 4000},
+			TokenTracking:     TokenTrackingConfig{Enabled: true},
+			Guard:             GuardConfig{InputEnabled: true, OutputEnabled: true},
 		},
 		Provider: ProviderConfig{},
 		Channels: ChannelsConfig{},

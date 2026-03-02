@@ -25,6 +25,14 @@ function readJson(file, fallback = []) {
   }
 }
 
+function parseArgs(argv) {
+  const out = { id: '' };
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === '--id') out.id = argv[i + 1] || '';
+  }
+  return out;
+}
+
 function addDays(dateStr, days) {
   const d = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(d.getTime())) return dateStr;
@@ -105,47 +113,50 @@ async function maybeNotifyChange(title, previous, current, details) {
 }
 
 function modeOfOutbound(m) {
-  return m.tripType || (m.returnDate ? 'roundtrip_context' : 'oneway');
+  const cfg = m.config || {};
+  const route = m.route || {};
+  return cfg.tripType || (route.returnDate ? 'roundtrip_context' : 'oneway');
 }
 
 const MODE_HANDLERS = {
   roundtrip_locked: {
     searchMode: 'roundtrip_locked',
-    searchArgs: m => [m.depart, m.arrive, m.departDate, m.returnDate, m.outboundFlight],
-    reportTitle: m => `✈️ 往返锁定：${m.depart} -> ${m.arrive}  ${m.departDate}/${m.returnDate}`,
+    searchArgs: m => [m.route.depart, m.route.arrive, m.route.departDate, m.route.returnDate, m.config.outboundFlight],
+    reportTitle: m => `✈️ 往返锁定：${m.route.depart} -> ${m.route.arrive}  ${m.route.departDate}/${m.route.returnDate}`,
     emptyMessage: '未查询到返程选项。',
-    selectTarget: (flights, m) => flights.find(f => f.flight === m.returnFlight),
-    missingTargetMessage: m => `未找到返程航班：${m.returnFlight}`,
+    selectTarget: (flights, m) => flights.find(f => f.flight === m.config.returnFlight),
+    missingTargetMessage: m => `未找到返程航班：${m.config.returnFlight}`,
     currentValue: target => priceAmount(target),
-    previousValue: m => (m.lastObservedTotalPrice != null ? toNumber(m.lastObservedTotalPrice, null) : null),
+    previousValue: m => (m.observed?.lastTotalPrice != null ? toNumber(m.observed.lastTotalPrice, null) : null),
     reportTail: ({ m, target, current, previous }) => [
-      `去程航班：${m.outboundFlight}  返程航班：${m.returnFlight}`,
-      `基准总价：¥${toNumber(m.baselineTotalPrice, 0)}`,
+      `去程航班：${m.config.outboundFlight}  返程航班：${m.config.returnFlight}`,
+      `基准总价：¥${toNumber(m.config.baselineTotalPrice, 0)}`,
       previous == null
         ? `当前总价：¥${current}（首次记录）`
         : `当前总价：¥${current}（上次 ¥${previous}，${formatDelta(current - previous)}）`,
       legInfo(target) ? `停留信息：${legInfo(target)}` : '',
     ],
     persist: ({ m, target, current }) => {
-      m.lastObservedTotalPrice = current;
-      m.lastObservedReturnDep = target.depDateTime || target.dep || null;
-      m.lastObservedReturnArr = target.arrDateTime || target.arr || null;
+      m.observed = m.observed || {};
+      m.observed.lastTotalPrice = current;
+      m.observed.lastReturnDep = target.depDateTime || target.dep || null;
+      m.observed.lastReturnArr = target.arrDateTime || target.arr || null;
     },
     notifyTitle: '✈️ 往返锁定航班价格变化',
     notifyDetail: ({ m }) => [
-      `${m.depart}->${m.arrive}  ${m.departDate}/${m.returnDate}`,
-      `去程 ${m.outboundFlight} | 返程 ${m.returnFlight}`,
-      `基准总价 ¥${toNumber(m.baselineTotalPrice, 0)}`,
+      `${m.route.depart}->${m.route.arrive}  ${m.route.departDate}/${m.route.returnDate}`,
+      `去程 ${m.config.outboundFlight} | 返程 ${m.config.returnFlight}`,
+      `基准总价 ¥${toNumber(m.config.baselineTotalPrice, 0)}`,
     ],
   },
   outbound_day: {
     searchMode: 'outbound_day',
-    searchArgs: m => [m.depart, m.arrive, m.departDate, modeOfOutbound(m), m.returnDate || addDays(m.departDate, 1)],
-    reportTitle: m => `✈️ 去程：${m.depart} -> ${m.arrive}  ${m.departDate}`,
+    searchArgs: m => [m.route.depart, m.route.arrive, m.route.departDate, modeOfOutbound(m), m.route.returnDate || addDays(m.route.departDate, 1)],
+    reportTitle: m => `✈️ 去程：${m.route.depart} -> ${m.route.arrive}  ${m.route.departDate}`,
     emptyMessage: '未查询到可用航班。',
     selectTarget: flights => pickCheapest(flights),
     currentValue: target => priceAmount(target),
-    previousValue: m => (m.lastObservedMinPrice != null ? toNumber(m.lastObservedMinPrice, null) : null),
+    previousValue: m => (m.observed?.lastMinPrice != null ? toNumber(m.observed.lastMinPrice, null) : null),
     reportTail: ({ m, target, current, previous }) => [
       previous == null
         ? `最低价：¥${current}（首次记录）`
@@ -155,30 +166,34 @@ const MODE_HANDLERS = {
       `模式: ${modeOfOutbound(m)}`,
     ],
     persist: ({ m, target, current }) => {
-      m.lastObservedMinPrice = current;
-      m.tripType = modeOfOutbound(m);
-      syncLegSnapshot(m, target, 'lastObserved');
+      m.observed = m.observed || {};
+      m.observed.lastMinPrice = current;
+      m.observed.lastFlight = target.flight || null;
+      m.observed.lastDep = target.depDateTime || target.dep || null;
+      m.observed.lastArr = target.arrDateTime || target.arr || null;
+      m.config = m.config || {};
+      m.config.tripType = modeOfOutbound(m);
     },
     notifyTitle: '✈️ 去程整天最低价变化',
     notifyDetail: ({ m, target }) => [
-      `${m.depart}->${m.arrive}  ${m.departDate}`,
+      `${m.route.depart}->${m.route.arrive}  ${m.route.departDate}`,
       `模式: ${modeOfOutbound(m)}`,
       `当前最低: ${target.flight} ${renderLegTime(target)} [${renderTransfer(target)}]`,
     ],
   },
   return_after_outbound: {
     searchMode: 'return_after_outbound',
-    searchArgs: m => [m.depart, m.arrive, m.departDate, m.returnDate, m.outboundFlight, String(toNumber(m.outboundPrice, 0))],
-    reportTitle: m => `✈️ 返程优选：${m.depart} -> ${m.arrive}  ${m.departDate}/${m.returnDate}`,
+    searchArgs: m => [m.route.depart, m.route.arrive, m.route.departDate, m.route.returnDate, m.config.outboundFlight, String(toNumber(m.config.outboundPrice, 0))],
+    reportTitle: m => `✈️ 返程优选：${m.route.depart} -> ${m.route.arrive}  ${m.route.departDate}/${m.route.returnDate}`,
     emptyMessage: '未查询到返程选项。',
     selectTarget: flights => pickCheapest(flights),
     currentValue: target => priceAmount(target),
-    previousValue: m => (m.lastObservedBestTotal != null ? toNumber(m.lastObservedBestTotal, null) : null),
+    previousValue: m => (m.observed?.lastBestTotal != null ? toNumber(m.observed.lastBestTotal, null) : null),
     reportTail: ({ m, target, current, previous }) => {
-      const outboundPrice = toNumber(m.outboundPrice, 0);
+      const outboundPrice = toNumber(m.config.outboundPrice, 0);
       const bestReturnPrice = toNumber(target.extra, current - outboundPrice);
       return [
-        `已定去程：${m.outboundFlight}  ¥${outboundPrice}`,
+        `已定去程：${m.config.outboundFlight}  ¥${outboundPrice}`,
         previous == null
           ? `当前最优总价：¥${current}（首次记录）`
           : `最优总价：上次 ¥${previous} -> 当前 ¥${current}（${formatDelta(current - previous)}）`,
@@ -187,18 +202,21 @@ const MODE_HANDLERS = {
       ];
     },
     persist: ({ m, target, current }) => {
-      const outboundPrice = toNumber(m.outboundPrice, 0);
-      m.lastObservedBestTotal = current;
-      m.lastObservedBestReturnPrice = toNumber(target.extra, current - outboundPrice);
-      syncLegSnapshot(m, target, 'lastObservedBestReturn');
+      const outboundPrice = toNumber(m.config.outboundPrice, 0);
+      m.observed = m.observed || {};
+      m.observed.lastBestTotal = current;
+      m.observed.lastBestReturnPrice = toNumber(target.extra, current - outboundPrice);
+      m.observed.lastBestReturnFlight = target.flight || null;
+      m.observed.lastBestReturnDep = target.depDateTime || target.dep || null;
+      m.observed.lastBestReturnArr = target.arrDateTime || target.arr || null;
     },
     notifyTitle: '✈️ 固定去程下返程最优总价变化',
     notifyDetail: ({ m, target, current }) => {
-      const outboundPrice = toNumber(m.outboundPrice, 0);
+      const outboundPrice = toNumber(m.config.outboundPrice, 0);
       const bestReturnPrice = toNumber(target.extra, current - outboundPrice);
       return [
-        `${m.depart}->${m.arrive}  ${m.departDate}/${m.returnDate}`,
-        `已定去程: ${m.outboundFlight} (¥${outboundPrice})`,
+        `${m.route.depart}->${m.route.arrive}  ${m.route.departDate}/${m.route.returnDate}`,
+        `已定去程: ${m.config.outboundFlight} (¥${outboundPrice})`,
         `当前最优返程: ${target.flight} ${renderLegTime(target)} [${renderTransfer(target)}] (+¥${bestReturnPrice})`,
       ];
     },
@@ -235,6 +253,7 @@ async function checkOne(m) {
 }
 
 async function main() {
+  const args = parseArgs(process.argv.slice(2));
   if (!fs.existsSync(DATA_FILE)) {
     console.log('暂无监控任务');
     return;
@@ -246,11 +265,20 @@ async function main() {
     return;
   }
 
+  let target = null;
+  if (args.id) {
+    target = monitors.find(m => m.id === args.id);
+    if (!target) {
+      console.log(`monitor not found: ${args.id}`);
+      process.exit(1);
+    }
+  }
+
   let dirty = false;
   const reports = [];
 
-  for (const m of monitors) {
-    if ((m.status || 'enabled') !== 'enabled') continue;
+  const candidates = target ? [target] : monitors.filter(m => (m.status || 'enabled') === 'enabled' && !!m.cronJobId);
+  for (const m of candidates) {
     try {
       const result = await checkOne(m);
       if (result.dirty) dirty = true;

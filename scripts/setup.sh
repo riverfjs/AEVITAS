@@ -86,7 +86,14 @@ cat > "$CONFIG_FILE" <<EOF_JSON
     "model": "claude-sonnet-4-5-20250929",
     "maxTokens": 8192,
     "temperature": 0.7,
-    "maxToolIterations": 20
+    "maxToolIterations": 20,
+    "tokenTracking": {
+      "enabled": true
+    },
+    "guard": {
+      "inputEnabled": true,
+      "outputEnabled": true
+    }
   },
   "provider": {
     "type": "${PROVIDER_TYPE}",

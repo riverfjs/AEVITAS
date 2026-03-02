@@ -1,7 +1,9 @@
 package channel
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
@@ -26,6 +29,7 @@ type TelegramBot interface {
 	GetUpdatesChan(config tgbotapi.UpdateConfig) tgbotapi.UpdatesChannel
 	StopReceivingUpdates()
 	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
+	EditMessageText(chatID int64, messageID int, text string) (tgbotapi.Message, error)
 	GetSelf() tgbotapi.User
 	GetFileDirectURL(fileID string) (string, error)
 }
@@ -45,6 +49,11 @@ func (w *tgBotWrapper) StopReceivingUpdates() {
 
 func (w *tgBotWrapper) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 	return w.bot.Send(c)
+}
+
+func (w *tgBotWrapper) EditMessageText(chatID int64, messageID int, text string) (tgbotapi.Message, error) {
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	return w.bot.Send(edit)
 }
 
 func (w *tgBotWrapper) GetSelf() tgbotapi.User {
@@ -74,7 +83,35 @@ type TelegramChannel struct {
 	proxy      string
 	cancel     context.CancelFunc
 	botFactory BotFactory
+	previewMu  sync.Mutex
+	previewMsg map[int64]previewState
 }
+
+type previewState struct {
+	draftMessageID int
+	toolMessageID  int
+	lastDraftText  string
+	lastEditAt     time.Time
+	toolBlockIndex int
+	toolEntries    []toolEntry
+	hadToolProgress bool
+}
+
+type toolEntry struct {
+	Name      string
+	ParamsRaw string
+	When      string
+	Raw       string
+}
+
+const (
+	telegramEventKey           = "telegram_event"
+	telegramEventPreviewUpdate = "preview_update"
+	telegramEventPreviewFinal  = "preview_final"
+	telegramEventToolProgress  = "tool_progress"
+	telegramEventUsageHUD      = "usage_hud"
+	maxToolBlockChars          = 3800
+)
 
 func NewTelegramChannel(cfg config.TelegramConfig, b *bus.MessageBus, logger sdklogger.Logger) (*TelegramChannel, error) {
 	return NewTelegramChannelWithFactory(cfg, b, defaultBotFactory, logger)
@@ -91,6 +128,7 @@ func NewTelegramChannelWithFactory(cfg config.TelegramConfig, b *bus.MessageBus,
 		token:       cfg.Token,
 		proxy:       cfg.Proxy,
 		botFactory:  factory,
+		previewMsg:  make(map[int64]previewState),
 	}
 	return ch, nil
 }
@@ -296,10 +334,349 @@ func (t *TelegramChannel) Send(msg bus.OutboundMessage) error {
 
 	// Send text content if present
 	if msg.Content != "" {
+		switch telegramEvent(msg.Metadata) {
+		case telegramEventPreviewUpdate:
+			return t.sendPreview(chatID, msg.Content, "update")
+		case telegramEventPreviewFinal:
+			return t.sendPreview(chatID, msg.Content, "final")
+		case telegramEventUsageHUD:
+			return t.sendUsageHUD(chatID, msg.Content)
+		case telegramEventToolProgress:
+			return t.sendToolProgress(chatID, msg)
+		}
 		return t.sendNewMessage(chatID, msg.Content)
 	}
 
 	return nil
+}
+
+func telegramEvent(meta map[string]any) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	mode, _ := meta[telegramEventKey].(string)
+	return strings.ToLower(strings.TrimSpace(mode))
+}
+
+func (t *TelegramChannel) sendPreview(chatID int64, content, mode string) error {
+	isFinal := mode == "final"
+	if isFinal {
+		return t.finalizePreview(chatID, content)
+	}
+
+	text := renderDraftText(content)
+	if text == "" {
+		return nil
+	}
+	text = truncateTelegramText(text, 4000)
+
+	state, err := t.ensureTurnState(chatID)
+	if err != nil {
+		return err
+	}
+	if state.lastDraftText == text {
+		return nil
+	}
+
+	if _, err := t.bot.EditMessageText(chatID, state.draftMessageID, text); err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "message is not modified") {
+			return nil
+		}
+		m, sendErr := t.bot.Send(tgbotapi.NewMessage(chatID, text))
+		if sendErr != nil {
+			return fmt.Errorf("edit preview: %w; fallback send: %v", err, sendErr)
+		}
+		t.previewMu.Lock()
+		t.previewMsg[chatID] = previewState{
+			draftMessageID: m.MessageID,
+			toolMessageID:  state.toolMessageID,
+			lastDraftText:  text,
+			lastEditAt:     time.Now(),
+			toolBlockIndex: state.toolBlockIndex,
+			toolEntries:    state.toolEntries,
+			hadToolProgress: state.hadToolProgress,
+		}
+		t.previewMu.Unlock()
+		return nil
+	}
+
+	t.previewMu.Lock()
+	t.previewMsg[chatID] = previewState{
+		draftMessageID: state.draftMessageID,
+		toolMessageID:  state.toolMessageID,
+		lastDraftText:  text,
+		lastEditAt:     time.Now(),
+		toolBlockIndex: state.toolBlockIndex,
+		toolEntries:    state.toolEntries,
+		hadToolProgress: state.hadToolProgress,
+	}
+	t.previewMu.Unlock()
+	return nil
+}
+
+func (t *TelegramChannel) finalizePreview(chatID int64, content string) error {
+	t.previewMu.Lock()
+	state := t.previewMsg[chatID]
+	t.previewMu.Unlock()
+
+	ctx := context.Background()
+	const maxUTF16Len = 4090
+	contents, err := telegramify.Telegramify(ctx, content, maxUTF16Len, false, nil)
+	if err != nil {
+		return fmt.Errorf("telegramify process: %w", err)
+	}
+	if len(contents) == 0 {
+		return nil
+	}
+
+	usedPreview := false
+	for _, item := range contents {
+		switch c := item.(type) {
+		case *telegramify.Text:
+			if !usedPreview && state.draftMessageID != 0 {
+				if err := t.editPreviewWithTextContent(chatID, state.draftMessageID, c); err == nil {
+					usedPreview = true
+					continue
+				}
+			}
+			if err := t.sendTextContent(chatID, c); err != nil {
+				return err
+			}
+		case *telegramify.File:
+			if !usedPreview && state.draftMessageID != 0 {
+				_, _ = t.bot.EditMessageText(chatID, state.draftMessageID, "已生成附件，正在发送...")
+				usedPreview = true
+			}
+			if err := t.sendFileContent(chatID, c); err != nil {
+				return err
+			}
+		case *telegramify.Photo:
+			if !usedPreview && state.draftMessageID != 0 {
+				_, _ = t.bot.EditMessageText(chatID, state.draftMessageID, "已生成图片，正在发送...")
+				usedPreview = true
+			}
+			if err := t.sendPhotoContent(chatID, c); err != nil {
+				return err
+			}
+		default:
+			t.logger.Warnf("[telegram] unknown content type: %T", item)
+		}
+	}
+
+	// Keep the tool block state after finalization so post-final metadata
+	// (e.g. usage HUD) can still append to the active turn summary.
+	t.previewMu.Lock()
+	cur := t.previewMsg[chatID]
+	cur.draftMessageID = 0
+	cur.lastDraftText = ""
+	cur.lastEditAt = time.Now()
+	if cur.toolMessageID == 0 && state.toolMessageID != 0 {
+		cur.toolMessageID = state.toolMessageID
+		cur.toolBlockIndex = state.toolBlockIndex
+		cur.toolEntries = state.toolEntries
+		cur.hadToolProgress = state.hadToolProgress
+	}
+	t.previewMsg[chatID] = cur
+	t.previewMu.Unlock()
+	return nil
+}
+
+func (t *TelegramChannel) ensureTurnState(chatID int64) (previewState, error) {
+	t.previewMu.Lock()
+	state, ok := t.previewMsg[chatID]
+	t.previewMu.Unlock()
+	if ok && state.draftMessageID != 0 && state.toolMessageID != 0 {
+		return state, nil
+	}
+
+	toolMsgID, err := t.sendMarkdownText(chatID, formatToolBlock(1, nil))
+	if err != nil {
+		return previewState{}, fmt.Errorf("send tool block: %w", err)
+	}
+	draftMsg, err := t.bot.Send(tgbotapi.NewMessage(chatID, "⌛ 正在生成回复..."))
+	if err != nil {
+		return previewState{}, fmt.Errorf("send draft block: %w", err)
+	}
+
+	state = previewState{
+		draftMessageID: draftMsg.MessageID,
+		toolMessageID:  toolMsgID,
+		toolBlockIndex: 1,
+		hadToolProgress: false,
+	}
+	t.previewMu.Lock()
+	t.previewMsg[chatID] = state
+	t.previewMu.Unlock()
+	return state, nil
+}
+
+func (t *TelegramChannel) sendToolProgress(chatID int64, msg bus.OutboundMessage) error {
+	state, err := t.ensureTurnState(chatID)
+	if err != nil {
+		return err
+	}
+	entry := buildToolEntry(msg)
+	if entry.Name == "" && strings.TrimSpace(entry.Raw) == "" {
+		return nil
+	}
+
+	tryEntries := append(append([]toolEntry{}, state.toolEntries...), entry)
+	block := formatToolBlock(state.toolBlockIndex, tryEntries)
+	if len([]rune(block)) > maxToolBlockChars {
+		// Start a new tool block without dropping old logs.
+		state.toolBlockIndex++
+		state.toolEntries = []toolEntry{entry}
+		newBlock := formatToolBlock(state.toolBlockIndex, state.toolEntries)
+		mID, sendErr := t.sendMarkdownText(chatID, newBlock)
+		if sendErr != nil {
+			return fmt.Errorf("send tool block rollover: %w", sendErr)
+		}
+		state.toolMessageID = mID
+	} else {
+		if err := t.editMarkdownMessage(chatID, state.toolMessageID, block); err != nil {
+			msg := strings.ToLower(err.Error())
+			if !strings.Contains(msg, "message is not modified") {
+				return fmt.Errorf("edit tool block: %w", err)
+			}
+		}
+		state.toolEntries = tryEntries
+	}
+	state.hadToolProgress = true
+
+	t.previewMu.Lock()
+	cur := t.previewMsg[chatID]
+	cur.toolMessageID = state.toolMessageID
+	cur.toolBlockIndex = state.toolBlockIndex
+	cur.toolEntries = state.toolEntries
+	cur.hadToolProgress = state.hadToolProgress
+	t.previewMsg[chatID] = cur
+	t.previewMu.Unlock()
+	return nil
+}
+
+func (t *TelegramChannel) sendUsageHUD(chatID int64, content string) error {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+	// Usage HUD is always sent as standalone message.
+	return t.sendPlainText(chatID, content)
+}
+
+func (t *TelegramChannel) sendPlainText(chatID int64, content string) error {
+	text := truncateTelegramText(content, 4000)
+	if text == "" {
+		return nil
+	}
+	_, err := t.bot.Send(tgbotapi.NewMessage(chatID, text))
+	return err
+}
+
+func formatToolBlock(blockIndex int, entries []toolEntry) string {
+	var b strings.Builder
+	if blockIndex <= 1 {
+		b.WriteString("🧰 Tool Calls")
+	} else {
+		b.WriteString(fmt.Sprintf("🧰 Tool Calls (续 %d)", blockIndex))
+	}
+	if len(entries) == 0 {
+		b.WriteString("\n（等待工具调用）")
+		return b.String()
+	}
+	for _, e := range entries {
+		name := strings.TrimSpace(e.Name)
+		if name == "" {
+			name = "Tool"
+		}
+		payload := normalizeToolPayload(e)
+		if payload == "" {
+			continue
+		}
+		b.WriteString("\n\n⏳ ")
+		b.WriteString(name)
+		b.WriteString("\n```text\n")
+		b.WriteString(payload)
+		b.WriteString("\n```")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func buildToolEntry(msg bus.OutboundMessage) toolEntry {
+	entry := toolEntry{Raw: strings.TrimSpace(msg.Content)}
+	if msg.Metadata == nil {
+		return entry
+	}
+	if name, ok := msg.Metadata["tool_name"].(string); ok {
+		entry.Name = strings.TrimSpace(name)
+	}
+	if params, ok := msg.Metadata["tool_params"].(string); ok {
+		entry.ParamsRaw = strings.TrimSpace(params)
+	}
+	if when, ok := msg.Metadata["tool_time"].(string); ok {
+		entry.When = strings.TrimSpace(when)
+	}
+	return entry
+}
+
+func normalizeToolPayload(e toolEntry) string {
+	raw := strings.TrimSpace(e.ParamsRaw)
+	if raw == "" || raw == "{}" {
+		raw = strings.TrimSpace(e.Raw)
+	}
+	if raw == "" {
+		return "{}"
+	}
+	if json.Valid([]byte(raw)) {
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, []byte(raw)); err == nil {
+			raw = buf.String()
+		}
+	}
+	raw = strings.ReplaceAll(raw, "```", "'''")
+	return truncateTelegramText(raw, 3400)
+}
+
+func renderDraftText(content string) string {
+	text := strings.TrimSpace(content)
+	if text == "" {
+		return ""
+	}
+	closed := closeOpenMarkdown(text)
+	rendered, _ := telegramify.Convert(closed, false, nil)
+	rendered = strings.TrimSpace(rendered)
+	if rendered == "" {
+		return text
+	}
+	return rendered
+}
+
+func closeOpenMarkdown(s string) string {
+	if s == "" {
+		return s
+	}
+	closed := s
+	if strings.Count(closed, "```")%2 == 1 {
+		closed += "\n```"
+	}
+	if strings.Count(closed, "`")%2 == 1 {
+		closed += "`"
+	}
+	if strings.Count(closed, "**")%2 == 1 {
+		closed += "**"
+	}
+	return closed
+}
+
+func truncateTelegramText(text string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	r := []rune(text)
+	if len(r) <= maxRunes {
+		return text
+	}
+	return string(r[:maxRunes]) + "..."
 }
 
 // sendPhoto sends a photo to Telegram (kept for backward compatibility)
@@ -407,24 +784,7 @@ func (t *TelegramChannel) sendTextContent(chatID int64, text *telegramify.Text) 
 	tgMsg := tgbotapi.NewMessage(chatID, text.Text)
 	
 	// Convert MessageEntity to Telegram's format
-	if len(text.Entities) > 0 {
-		tgEntities := make([]tgbotapi.MessageEntity, 0, len(text.Entities))
-		for _, ent := range text.Entities {
-			tgEnt := tgbotapi.MessageEntity{
-				Type:   ent.Type,
-				Offset: ent.Offset,
-				Length: ent.Length,
-			}
-			if ent.URL != "" {
-				tgEnt.URL = ent.URL
-			}
-			if ent.Language != "" {
-				tgEnt.Language = ent.Language
-			}
-			tgEntities = append(tgEntities, tgEnt)
-		}
-		tgMsg.Entities = tgEntities
-	}
+	tgMsg.Entities = toTelegramEntities(text.Entities)
 	
 	// Send the message
 	if _, err := t.bot.Send(tgMsg); err != nil {
@@ -436,6 +796,62 @@ func (t *TelegramChannel) sendTextContent(chatID int64, text *telegramify.Text) 
 		}
 	}
 	
+	return nil
+}
+
+func (t *TelegramChannel) sendMarkdownText(chatID int64, markdown string) (int, error) {
+	text, entities := telegramify.Convert(markdown, false, nil)
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.Entities = toTelegramEntities(entities)
+	sent, err := t.bot.Send(msg)
+	if err != nil {
+		return 0, err
+	}
+	return sent.MessageID, nil
+}
+
+func (t *TelegramChannel) editMarkdownMessage(chatID int64, messageID int, markdown string) error {
+	text, entities := telegramify.Convert(markdown, false, nil)
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	edit.Entities = toTelegramEntities(entities)
+	_, err := t.bot.Send(edit)
+	return err
+}
+
+func toTelegramEntities(entities []telegramify.MessageEntity) []tgbotapi.MessageEntity {
+	if len(entities) == 0 {
+		return nil
+	}
+	tgEntities := make([]tgbotapi.MessageEntity, 0, len(entities))
+	for _, ent := range entities {
+		tgEnt := tgbotapi.MessageEntity{
+			Type:   ent.Type,
+			Offset: ent.Offset,
+			Length: ent.Length,
+		}
+		if ent.URL != "" {
+			tgEnt.URL = ent.URL
+		}
+		if ent.Language != "" {
+			tgEnt.Language = ent.Language
+		}
+		tgEntities = append(tgEntities, tgEnt)
+	}
+	return tgEntities
+}
+
+func (t *TelegramChannel) editPreviewWithTextContent(chatID int64, messageID int, text *telegramify.Text) error {
+	if text == nil {
+		return nil
+	}
+	msgText := strings.TrimSpace(text.Text)
+	if msgText == "" {
+		return nil
+	}
+	_, err := t.bot.EditMessageText(chatID, messageID, msgText)
+	if err != nil {
+		return fmt.Errorf("edit preview text: %w", err)
+	}
 	return nil
 }
 

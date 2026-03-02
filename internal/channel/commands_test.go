@@ -2,9 +2,11 @@ package channel
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/riverfjs/aevitas/internal/bus"
+	"github.com/riverfjs/agentsdk-go/pkg/api"
 )
 
 // mockSessionResetter implements SessionResetter interface
@@ -19,8 +21,22 @@ func (m *mockSessionResetter) ClearSession(sessionID string) error {
 	return nil
 }
 
+type mockUsageReporter struct {
+	mockSessionResetter
+	session *api.SessionTokenStats
+	total   *api.SessionTokenStats
+}
+
+func (m *mockUsageReporter) GetSessionStats(sessionID string) *api.SessionTokenStats {
+	return m.session
+}
+
+func (m *mockUsageReporter) GetTotalStats() *api.SessionTokenStats {
+	return m.total
+}
+
 func TestCommandHandler_HandleStart(t *testing.T) {
-	handler := NewCommandHandler(nil, "")
+	handler := NewCommandHandler(nil, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -45,7 +61,7 @@ func TestCommandHandler_HandleStart(t *testing.T) {
 }
 
 func TestCommandHandler_HandleHelp(t *testing.T) {
-	handler := NewCommandHandler(nil, "")
+	handler := NewCommandHandler(nil, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -81,7 +97,7 @@ func TestCommandHandler_HandleReset_Success(t *testing.T) {
 		},
 	}
 	
-	handler := NewCommandHandler(resetter, "")
+	handler := NewCommandHandler(resetter, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "telegram",
@@ -111,7 +127,7 @@ func TestCommandHandler_HandleReset_Success(t *testing.T) {
 }
 
 func TestCommandHandler_HandleReset_NoFunction(t *testing.T) {
-	handler := NewCommandHandler(nil, "")
+	handler := NewCommandHandler(nil, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -140,7 +156,7 @@ func TestCommandHandler_HandleReset_Error(t *testing.T) {
 		},
 	}
 	
-	handler := NewCommandHandler(resetter, "")
+	handler := NewCommandHandler(resetter, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -161,7 +177,7 @@ func TestCommandHandler_HandleReset_Error(t *testing.T) {
 }
 
 func TestCommandHandler_UnknownCommand(t *testing.T) {
-	handler := NewCommandHandler(nil, "")
+	handler := NewCommandHandler(nil, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -182,7 +198,7 @@ func TestCommandHandler_UnknownCommand(t *testing.T) {
 }
 
 func TestCommandHandler_NotACommand(t *testing.T) {
-	handler := NewCommandHandler(nil, "")
+	handler := NewCommandHandler(nil, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -203,7 +219,7 @@ func TestCommandHandler_NotACommand(t *testing.T) {
 }
 
 func TestCommandHandler_EmptyContent(t *testing.T) {
-	handler := NewCommandHandler(nil, "")
+	handler := NewCommandHandler(nil, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -220,7 +236,7 @@ func TestCommandHandler_EmptyContent(t *testing.T) {
 }
 
 func TestCommandHandler_CaseInsensitive(t *testing.T) {
-	handler := NewCommandHandler(nil, "")
+	handler := NewCommandHandler(nil, "", 200000)
 	
 	testCases := []string{"/START", "/Start", "/StArT", "/HELP", "/Help", "/RESET", "/Reset"}
 	
@@ -241,7 +257,7 @@ func TestCommandHandler_CaseInsensitive(t *testing.T) {
 }
 
 func TestCommandHandler_WithWhitespace(t *testing.T) {
-	handler := NewCommandHandler(nil, "")
+	handler := NewCommandHandler(nil, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -258,7 +274,7 @@ func TestCommandHandler_WithWhitespace(t *testing.T) {
 }
 
 func TestCommandHandler_CommandWithArgs(t *testing.T) {
-	handler := NewCommandHandler(nil, "")
+	handler := NewCommandHandler(nil, "", 200000)
 	
 	msg := bus.InboundMessage{
 		Channel:  "test",
@@ -271,6 +287,73 @@ func TestCommandHandler_CommandWithArgs(t *testing.T) {
 	
 	if !result.Handled {
 		t.Error("Expected /start with args to be handled")
+	}
+}
+
+func TestCommandHandler_HandleUsage_Default(t *testing.T) {
+	reporter := &mockUsageReporter{
+		session: &api.SessionTokenStats{
+			TotalInput:          100,
+			TotalOutput:         50,
+			TotalTokens:         150,
+			CacheCreated:        10,
+			CacheRead:           20,
+		},
+	}
+	handler := NewCommandHandler(reporter, "", 200000)
+	msg := bus.InboundMessage{Channel: "telegram", ChatID: "1", SenderID: "u", Content: "/usage"}
+	result := handler.HandleCommand(msg)
+	if !result.Handled {
+		t.Fatal("expected /usage handled")
+	}
+	if result.Event != "usage_hud" {
+		t.Fatalf("expected usage_hud event, got %q", result.Event)
+	}
+	if !strings.Contains(result.Response, "Usage (Current Session)") ||
+		!strings.Contains(result.Response, "Context window:") ||
+		!strings.Contains(result.Response, "⬜") ||
+		!strings.Contains(result.Response, "(100/200000)") ||
+		!strings.Contains(result.Response, "Total billed tokens: 150") ||
+		!strings.Contains(result.Response, "Input: 100 | Output: 50 | Cache: 30 | Total: 150") {
+		t.Fatalf("unexpected response: %s", result.Response)
+	}
+}
+
+func TestCommandHandler_HandleUsage_Total(t *testing.T) {
+	reporter := &mockUsageReporter{
+		total: &api.SessionTokenStats{
+			TotalInput:   500,
+			TotalOutput:  200,
+			TotalTokens:  700,
+		},
+	}
+	handler := NewCommandHandler(reporter, "", 200000)
+	msg := bus.InboundMessage{Channel: "telegram", ChatID: "1", SenderID: "u", Content: "/usage total"}
+	result := handler.HandleCommand(msg)
+	if !result.Handled {
+		t.Fatal("expected /usage total handled")
+	}
+	if result.Event != "usage_hud" {
+		t.Fatalf("expected usage_hud event, got %q", result.Event)
+	}
+	if !strings.Contains(result.Response, "Usage (Total)") ||
+		!strings.Contains(result.Response, "⬜") ||
+		!strings.Contains(result.Response, "(500/200000)") ||
+		!strings.Contains(result.Response, "Total billed tokens: 700") ||
+		!strings.Contains(result.Response, "Input: 500 | Output: 200 | Cache: 0 | Total: 700") {
+		t.Fatalf("unexpected response: %s", result.Response)
+	}
+}
+
+func TestCommandHandler_HandleUsage_NoReporter(t *testing.T) {
+	handler := NewCommandHandler(&mockSessionResetter{}, "", 200000)
+	msg := bus.InboundMessage{Channel: "telegram", ChatID: "1", SenderID: "u", Content: "/usage"}
+	result := handler.HandleCommand(msg)
+	if !result.Handled {
+		t.Fatal("expected /usage handled")
+	}
+	if !strings.Contains(result.Response, "not available") {
+		t.Fatalf("unexpected response: %s", result.Response)
 	}
 }
 

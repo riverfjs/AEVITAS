@@ -31,15 +31,35 @@ type mockRuntime struct {
 	closed   bool
 	clearSessionCalled bool
 	clearSessionError  error
+	sessionStats       *api.SessionTokenStats
+	totalStats         *api.SessionTokenStats
 }
 
 func (m *mockRuntime) Run(ctx context.Context, req api.Request) (*api.Response, error) {
 	return m.response, m.err
 }
 
+func (m *mockRuntime) RunStream(ctx context.Context, req api.Request) (<-chan api.StreamEvent, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	ch := make(chan api.StreamEvent, 2)
+	ch <- api.StreamEvent{Type: api.EventFinalResponse, Output: m.response}
+	close(ch)
+	return ch, nil
+}
+
 func (m *mockRuntime) ClearSession(sessionID string) error {
 	m.clearSessionCalled = true
 	return m.clearSessionError
+}
+
+func (m *mockRuntime) GetSessionStats(sessionID string) *api.SessionTokenStats {
+	return m.sessionStats
+}
+
+func (m *mockRuntime) GetTotalStats() *api.SessionTokenStats {
+	return m.totalStats
 }
 
 
@@ -261,6 +281,169 @@ func TestGateway_ProcessLoop(t *testing.T) {
 	}
 
 	cancel()
+}
+
+func TestGateway_DeliverAgentResponse_WithTelegramPreviewFinal(t *testing.T) {
+	msgBus := bus.NewMessageBus(10)
+	g := &Gateway{
+		bus:    msgBus,
+		logger: newTestLogger(),
+	}
+	in := bus.InboundMessage{
+		Channel: "telegram",
+		ChatID:  "chat1",
+	}
+	resp := &api.Response{
+		Result: &api.Result{Output: "final answer"},
+	}
+
+	g.deliverAgentResponse(in, resp, true)
+
+	select {
+	case out := <-msgBus.Outbound:
+		if out.Content != "final answer" {
+			t.Fatalf("unexpected content: %q", out.Content)
+		}
+		if mode, _ := out.Metadata[telegramEventKey].(string); mode != telegramEventPreviewFinal {
+			t.Fatalf("expected preview final metadata, got %#v", out.Metadata)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting outbound message")
+	}
+}
+
+func TestGateway_DeliverAgentResponse_EmitsTelegramUsageHUD(t *testing.T) {
+	msgBus := bus.NewMessageBus(10)
+	g := &Gateway{
+		cfg: &config.Config{
+			Agent: config.AgentConfig{
+				ContextWindow: config.ContextWindowConfig{Tokens: 200000},
+			},
+		},
+		bus: msgBus,
+		runtime: &mockRuntime{
+			sessionStats: &api.SessionTokenStats{
+				TotalInput:   1200,
+				TotalOutput:  300,
+				TotalTokens:  1500,
+				CacheRead:    40,
+				CacheCreated: 10,
+			},
+		},
+		logger:        newTestLogger(),
+		usageNotified: make(map[string]uint8),
+	}
+	in := bus.InboundMessage{Channel: "telegram", ChatID: "chat1", SenderID: "u1", Content: "hello"}
+	resp := &api.Response{
+		Result: &api.Result{Output: "final answer"},
+	}
+	resp.Result.Usage.InputTokens = 70000
+	resp.Result.Usage.OutputTokens = 100
+
+	g.deliverAgentResponse(in, resp, false)
+
+	var (
+		gotResult bool
+		gotUsage  bool
+	)
+	timeout := time.After(time.Second)
+	for !(gotResult && gotUsage) {
+		select {
+		case out := <-msgBus.Outbound:
+			if out.Content == "final answer" {
+				gotResult = true
+			}
+			if out.Metadata != nil {
+				if v, ok := out.Metadata[telegramEventKey].(string); ok && v == telegramEventUsageHUD {
+					gotUsage = true
+					if !strings.Contains(out.Content, "Context window:") {
+						t.Fatalf("expected context window in usage hud, got %q", out.Content)
+					}
+					if !strings.Contains(out.Content, "🟨") || !strings.Contains(out.Content, "⬜") {
+						t.Fatalf("expected emoji usage bar in usage hud, got %q", out.Content)
+					}
+				}
+			}
+		case <-timeout:
+			t.Fatalf("timeout waiting for result+usage (result=%v usage=%v)", gotResult, gotUsage)
+		}
+	}
+}
+
+func TestGateway_DeliverAgentResponse_UsageThresholdAndDedup(t *testing.T) {
+	msgBus := bus.NewMessageBus(20)
+	g := &Gateway{
+		cfg: &config.Config{
+			Agent: config.AgentConfig{
+				ContextWindow: config.ContextWindowConfig{Tokens: 200000},
+			},
+		},
+		bus: msgBus,
+		runtime: &mockRuntime{
+			sessionStats: &api.SessionTokenStats{
+				TotalInput:   2000,
+				TotalOutput:  300,
+				TotalTokens:  2300,
+				CacheRead:    20,
+				CacheCreated: 10,
+			},
+		},
+		logger:        newTestLogger(),
+		usageNotified: make(map[string]uint8),
+	}
+	in := bus.InboundMessage{Channel: "telegram", ChatID: "chat1", SenderID: "u1", Content: "hello"}
+	resp := &api.Response{Result: &api.Result{Output: "ok"}}
+
+	// <30% should not emit usage.
+	resp.Result.Usage.InputTokens = 50000 // 25%
+	g.deliverAgentResponse(in, resp, false)
+	first := <-msgBus.Outbound
+	if first.Content != "ok" {
+		t.Fatalf("expected first result message, got %q", first.Content)
+	}
+	select {
+	case out := <-msgBus.Outbound:
+		t.Fatalf("did not expect usage below threshold, got %q", out.Content)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// >30% should emit usage once.
+	resp.Result.Usage.InputTokens = 70000 // 35%
+	g.deliverAgentResponse(in, resp, false)
+	_ = <-msgBus.Outbound // result
+	var gotUsage30 bool
+	select {
+	case out := <-msgBus.Outbound:
+		gotUsage30 = out.Metadata[telegramEventKey] == telegramEventUsageHUD
+	case <-time.After(time.Second):
+		t.Fatal("expected usage message at 30% threshold")
+	}
+	if !gotUsage30 {
+		t.Fatal("expected telegram usage_hud event")
+	}
+
+	// Still between 30-50 should not emit again.
+	resp.Result.Usage.InputTokens = 80000 // 40%
+	g.deliverAgentResponse(in, resp, false)
+	_ = <-msgBus.Outbound // result
+	select {
+	case out := <-msgBus.Outbound:
+		t.Fatalf("expected no duplicate usage in same threshold band, got %q", out.Content)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Cross 50 should emit again.
+	resp.Result.Usage.InputTokens = 110000 // 55%
+	g.deliverAgentResponse(in, resp, false)
+	_ = <-msgBus.Outbound // result
+	select {
+	case out := <-msgBus.Outbound:
+		if out.Metadata[telegramEventKey] != telegramEventUsageHUD {
+			t.Fatalf("expected usage event at 50%%, got %#v", out.Metadata)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected usage message at 50% threshold")
+	}
 }
 
 func TestGateway_RunAgent_Error(t *testing.T) {
@@ -815,6 +998,9 @@ func TestGateway_ResetSession_Success(t *testing.T) {
 	defer g.Shutdown()
 	
 	sessionKey := "telegram-123"
+	g.usageMu.Lock()
+	g.usageNotified[sessionKey] = usageMark30 | usageMark50
+	g.usageMu.Unlock()
 	
 	// Reset session
 	if err := g.resetSession(sessionKey); err != nil {
@@ -824,6 +1010,12 @@ func TestGateway_ResetSession_Success(t *testing.T) {
 	// Verify SDK ClearSession was called
 	if !mockRt.clearSessionCalled {
 		t.Error("Expected ClearSession to be called on runtime")
+	}
+	g.usageMu.Lock()
+	_, exists := g.usageNotified[sessionKey]
+	g.usageMu.Unlock()
+	if exists {
+		t.Error("expected usage threshold state to be cleared after reset")
 	}
 }
 

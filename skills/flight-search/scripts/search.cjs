@@ -184,6 +184,15 @@ function buildView(payload) {
   };
 }
 
+function flightMatches(flight, targetFlight) {
+  if (!flight || !targetFlight) return false;
+  const target = String(targetFlight).trim().toUpperCase();
+  const primary = String(flight.primaryFlight || '').toUpperCase();
+  const full = String(flight.flight || '').toUpperCase();
+  if (primary === target || full === target) return true;
+  return full.split('+').map(s => s.trim()).includes(target);
+}
+
 async function collectFlights(page, baseDate) {
   const merged = new Map();
   let stableRounds = 0;
@@ -390,11 +399,22 @@ async function fetchOutbound({ depart, arrive, departDate, returnDate, tripType 
 async function fetchReturn({ depart, arrive, departDate, returnDate, outboundFlight }) {
   const sourceUrl = isIntlRoute(depart, arrive)
     ? buildIntlUrl({ depart, arrive, departDate, returnDate, tripType: 'roundtrip_context' })
-    : buildDomesticUrl({ depart, arrive, departDate, returnDate, outboundFlight: '' });
+    : buildDomesticUrl({ depart, arrive, departDate, returnDate, outboundFlight });
   return withBrowser(async page => {
     await preparePage(page, sourceUrl);
-    const ok = await clickOutbound(page, outboundFlight);
-    if (!ok) throw new Error(`Cannot select outbound flight: ${outboundFlight}`);
+    const inReturnStage = async () => page.evaluate(() => {
+      const txt = document.body?.innerText || '';
+      return txt.includes('去程已选') || txt.includes('选择返程') || txt.includes('返回日期');
+    });
+
+    // Prefer URL preselection (flightno). If page did not enter return stage,
+    // fallback to one manual click on outbound card.
+    if (!(await inReturnStage())) {
+      const ok = await clickOutbound(page, outboundFlight);
+      if (!ok || !(await inReturnStage())) {
+        throw new Error(`Cannot enter return stage for outbound flight: ${outboundFlight}`);
+      }
+    }
     const flights = await collectFlights(page, returnDate);
     return { sourceUrl: page.url(), flights };
   });
@@ -446,12 +466,59 @@ async function runRoundtripLocked(args) {
   return { ...payload, view: buildView(payload) };
 }
 
+async function runRoundtripFixed(args) {
+  const [depart, arrive, departDate, returnDate, outboundFlight, returnFlight] = args;
+  if (!depart || !arrive || !departDate || !returnDate || !outboundFlight || !returnFlight) {
+    throw new Error('Usage: node search.cjs roundtrip_fixed <DEPART> <ARRIVE> <DEPART_DATE> <RETURN_DATE> <OUTBOUND_FLIGHT> <RETURN_FLIGHT>');
+  }
+
+  const outboundData = await fetchOutbound({ depart, arrive, departDate, returnDate, tripType: 'roundtrip_context' });
+  const returnData = await fetchReturn({ depart, arrive, departDate, returnDate, outboundFlight });
+
+  const outbound = outboundData.flights.find(f => flightMatches(f, outboundFlight));
+  if (!outbound) throw new Error(`Outbound flight not found: ${outboundFlight}`);
+  const ret = returnData.flights.find(f => flightMatches(f, returnFlight));
+  if (!ret) throw new Error(`Return flight not found: ${returnFlight}`);
+
+  const totalPrice = Number(ret.price?.amount || 0);
+  const outboundPrice = Number(outbound.price?.amount || 0);
+  const extra = totalPrice - outboundPrice;
+
+  const lines = [
+    `固定往返：${depart} -> ${arrive}  ${departDate}/${returnDate}`,
+    '```',
+    `去程  ${outbound.flight}  ${outbound.depDateTime || outbound.dep} -> ${outbound.arrDateTime || outbound.arr}  ¥${outboundPrice}`,
+    `返程  ${ret.flight}  ${ret.depDateTime || ret.dep} -> ${ret.arrDateTime || ret.arr}  +¥${extra}`,
+    `总价  ¥${totalPrice}`,
+    '```',
+  ];
+
+  return {
+    mode: 'roundtrip_fixed',
+    depart,
+    arrive,
+    departDate,
+    returnDate,
+    outboundFlight,
+    returnFlight,
+    sourceUrl: returnData.sourceUrl,
+    outbound,
+    return: { ...ret, extra },
+    totalPrice,
+    view: {
+      table: lines.join('\n'),
+      hint: 'roundtrip_fixed returns one exact pair only',
+    },
+  };
+}
+
 async function main() {
   const [,, mode, ...args] = process.argv;
-  if (!mode) throw new Error('Mode required: outbound_day | return_after_outbound | roundtrip_locked');
+  if (!mode) throw new Error('Mode required: outbound_day | return_after_outbound | roundtrip_locked | roundtrip_fixed');
   if (mode === 'outbound_day') return console.log(JSON.stringify(await runOutboundDay(args), null, 2));
   if (mode === 'return_after_outbound') return console.log(JSON.stringify(await runReturnAfterOutbound(args), null, 2));
   if (mode === 'roundtrip_locked') return console.log(JSON.stringify(await runRoundtripLocked(args), null, 2));
+  if (mode === 'roundtrip_fixed') return console.log(JSON.stringify(await runRoundtripFixed(args), null, 2));
   throw new Error(`Unknown mode: ${mode}`);
 }
 

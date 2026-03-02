@@ -10,14 +10,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/riverfjs/agentsdk-go/pkg/api"
-	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
-	"github.com/riverfjs/agentsdk-go/pkg/model"
-	"github.com/spf13/cobra"
 	"github.com/riverfjs/aevitas/internal/config"
 	"github.com/riverfjs/aevitas/internal/gateway"
 	"github.com/riverfjs/aevitas/internal/logger"
+	"github.com/riverfjs/aevitas/internal/runtimeopts"
 	"github.com/riverfjs/aevitas/pkg/utils"
+	"github.com/riverfjs/agentsdk-go/pkg/api"
+	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
+	"github.com/spf13/cobra"
 )
 
 // Runtime interface for agent runtime (allows mocking in tests)
@@ -57,37 +57,10 @@ func DefaultRuntimeFactory(cfg *config.Config) (Runtime, error) {
 	defer log.Sync()
 
 	sysPrompt := buildSystemPrompt(cfg)
+	provider := runtimeopts.NewProvider(cfg)
+	sdkLog := sdklogger.NewZapLogger(log)
 
-	var provider api.ModelFactory
-	switch cfg.Provider.Type {
-	case "openai":
-		provider = &model.OpenAIProvider{
-			APIKey:    cfg.Provider.APIKey,
-			BaseURL:   cfg.Provider.BaseURL,
-			ModelName: cfg.Agent.Model,
-			MaxTokens: cfg.Agent.MaxTokens,
-		}
-	default:
-		provider = &model.AnthropicProvider{
-			APIKey:    cfg.Provider.APIKey,
-			BaseURL:   cfg.Provider.BaseURL,
-			ModelName: cfg.Agent.Model,
-			MaxTokens: cfg.Agent.MaxTokens,
-		}
-	}
-
-	rt, err := api.New(context.Background(), api.Options{
-		ProjectRoot:   cfg.Agent.Workspace,
-		ModelFactory:  provider,
-		SystemPrompt:  sysPrompt,
-		MaxIterations: cfg.Agent.MaxToolIterations,
-		HistoryLimit:  cfg.Agent.HistoryLimit,
-		Logger:        sdklogger.NewZapLogger(log),
-		AutoCompact: api.CompactConfig{
-			Enabled:   cfg.Agent.Compaction.Enabled,
-			Threshold: cfg.Agent.Compaction.Threshold,
-		},
-			})
+	rt, err := api.New(context.Background(), runtimeopts.BuildAPIOptions(cfg, provider, sysPrompt, sdkLog, nil))
 	if err != nil {
 		return nil, fmt.Errorf("create runtime: %w", err)
 	}
@@ -323,7 +296,7 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 	writeIfNotExists(filepath.Join(ws, ".claude", "settings.json"), defaultClaudeSettings)
 	writeIfNotExists(filepath.Join(ws, "MEMORY.md"), "")
 	writeIfNotExists(filepath.Join(ws, "HEARTBEAT.md"), "")
-	
+
 	// Copy built-in skills from embedded templates
 	if err := utils.CopyBuiltinSkills(ws); err != nil {
 		fmt.Printf("Warning: failed to copy skills: %v\n", err)
@@ -406,7 +379,6 @@ func writeIfNotExists(path, content string) {
 	}
 }
 
-
 const defaultAgentsMD = `# aevitas Agent
 
 You are aevitas, a personal AI assistant.
@@ -453,22 +425,22 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	skills, err := utils.ListInstalledSkills(cfg.Agent.Workspace)
 	if err != nil {
 		return err
 	}
-	
+
 	if len(skills) == 0 {
 		fmt.Println("No skills installed.")
 		return nil
 	}
-	
+
 	fmt.Println("Installed skills:")
 	for _, name := range skills {
 		fmt.Printf("  - %s\n", name)
 	}
-	
+
 	return nil
 }
 
@@ -477,12 +449,12 @@ func runSkillsInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	if len(args) == 0 {
 		// Install all (skip existing)
 		return utils.CopyBuiltinSkills(cfg.Agent.Workspace)
 	}
-	
+
 	// Install specific skill
 	return utils.InstallSkill(cfg.Agent.Workspace, args[0])
 }
@@ -492,12 +464,12 @@ func runSkillsUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	if len(args) == 0 {
 		// Update all (overwrite existing)
 		return utils.UpdateBuiltinSkills(cfg.Agent.Workspace)
 	}
-	
+
 	// Update specific skill
 	return utils.UpdateSkill(cfg.Agent.Workspace, args[0])
 }
@@ -507,7 +479,7 @@ func runSkillsUninstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	return utils.UninstallSkill(cfg.Agent.Workspace, args[0])
 }
 
@@ -516,20 +488,20 @@ func runSkillsVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	results, err := utils.VerifyAllSkills(cfg.Agent.Workspace)
 	if err != nil {
 		return err
 	}
-	
+
 	if len(results) == 0 {
 		fmt.Println("No skills installed.")
 		return nil
 	}
-	
+
 	fmt.Println("Verifying skills...")
 	hasIssues := false
-	
+
 	for skillName, verifyErr := range results {
 		if verifyErr != nil {
 			fmt.Printf("  ✗ %s: %v\n", skillName, verifyErr)
@@ -538,12 +510,12 @@ func runSkillsVerify(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  ✓ %s\n", skillName)
 		}
 	}
-	
+
 	if hasIssues {
 		fmt.Println("\nRun 'aevitas skills install' to fix issues.")
 		return fmt.Errorf("skill verification failed")
 	}
-	
+
 	fmt.Println("\nAll skills verified successfully.")
 	return nil
 }
