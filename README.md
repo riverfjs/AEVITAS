@@ -15,6 +15,8 @@ Personal AI assistant built on [agentsdk-go](https://github.com/riverfjs/agentsd
 - **Heartbeat** - Periodic tasks from HEARTBEAT.md
 - **Skills** - Pluggable skill system (see [`skills/README.md`](skills/README.md))
 - **Tool Progress** - Per-call tool logging with parameters sent to Telegram in real time
+- **Telegram Streaming UX** - Two-slot display (tool calls + draft response) with live preview updates
+- **Usage HUD** - Unified `/usage` + auto-threshold notifications (30% / 50% / 80%) with context window bar
 
 ## Quick Start
 
@@ -269,6 +271,12 @@ Quick steps:
 2. Set `token` in config or `AEVITAS_TELEGRAM_TOKEN` env var
 3. Run `make gateway`
 
+Telegram behavior highlights:
+- Streamed replies use preview updates during generation and finalize after completion.
+- Tool progress is rendered in a dedicated tool-call block.
+- `/usage` uses the same HUD formatter as automatic usage notices.
+- Automatic usage notices are sent as standalone messages only when context usage crosses 30% / 50% / 80%.
+
 ### Feishu (Lark)
 
 See [docs/feishu-setup.md](docs/feishu-setup.md) for detailed setup guide.
@@ -373,6 +381,19 @@ make lint            # Run golangci-lint
 | internal/channel | 90.5% |
 | internal/gateway | 90.2% |
 | cmd/aevitas | 82.3% |
+
+## Built-in Commands (Chat)
+
+- `/start` - Welcome message
+- `/help` - Show command/help overview
+- `/skill list` - List installed skills
+- `/reset` - Clear current session history
+- `/restart` - Restart gateway process (production mode)
+- `/logs [lines|all]` - Show gateway logs
+- `/status` - Show gateway status
+- `/usage [total]` - Show usage HUD (session or total)
+- `/chatid` - Show chat and sender IDs
+- `/cleanup` - Scan/clean temporary screenshot files
 
 ## License
 
