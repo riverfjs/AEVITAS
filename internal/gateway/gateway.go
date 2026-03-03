@@ -432,20 +432,19 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 		defer close(stopTyping)
 	}
 
-	// Build attachments from media
-	var attachments []api.Attachment
-	for _, mediaPath := range msg.Media {
-		// Detect mime type from file extension
-		mimeType := detectMimeType(mediaPath)
-		attachments = append(attachments, api.Attachment{
-			Type:     "image",
-			FilePath: mediaPath,
-			MimeType: mimeType,
-		})
-	}
-
+	attachments := buildAttachments(msg)
 	if len(attachments) > 0 {
-		g.logger.Infof("[gateway] processing %d image(s)", len(attachments))
+		imageCount := 0
+		audioCount := 0
+		for _, att := range attachments {
+			switch strings.ToLower(strings.TrimSpace(att.Type)) {
+			case "audio":
+				audioCount++
+			default:
+				imageCount++
+			}
+		}
+		g.logger.Infof("[gateway] processing attachments: total=%d image=%d audio=%d", len(attachments), imageCount, audioCount)
 	}
 
 	req := api.Request{
@@ -794,7 +793,12 @@ func (g *Gateway) processHookEvents(resp *api.Response) hookEventResult {
 				continue
 			}
 			g.logger.Debugf("[gateway] FileAttachment: path=%s tool=%s", payload.FilePath, payload.ToolName)
-			if payload.ToolName == "SendFile" && payload.FilePath != "" {
+			if payload.FilePath == "" {
+				continue
+			}
+			toolName := strings.ToLower(strings.TrimSpace(payload.ToolName))
+			// Send explicit tool files and voice pipeline audio attachments.
+			if toolName == "sendfile" || toolName == "voice_tts" {
 				res.sendFiles = append(res.sendFiles, payload.FilePath)
 			}
 		}
@@ -916,19 +920,55 @@ func formatProgressParams(raw string) string {
 	return "```text\n" + raw + "\n```"
 }
 
-// detectMimeType detects MIME type from file extension
-func detectMimeType(filePath string) string {
-	ext := strings.ToLower(filepath.Ext(filePath))
-	switch ext {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	default:
-		return "image/jpeg" // default
+func buildAttachments(msg bus.InboundMessage) []api.Attachment {
+	if len(msg.Media) == 0 {
+		return nil
 	}
+	typeMap := mapStringFromMeta(msg.Metadata, "media_types")
+	mimeMap := mapStringFromMeta(msg.Metadata, "media_mime_types")
+
+	attachments := make([]api.Attachment, 0, len(msg.Media))
+	for _, mediaPath := range msg.Media {
+		if strings.TrimSpace(mediaPath) == "" {
+			continue
+		}
+		attType := strings.TrimSpace(typeMap[mediaPath])
+		mime := strings.TrimSpace(mimeMap[mediaPath])
+		if mime == "" {
+			mime = api.DetectAttachmentMIME(attType, mediaPath)
+		}
+		if attType == "" {
+			attType = api.DetectAttachmentType("", mime, mediaPath)
+		}
+		attachments = append(attachments, api.Attachment{
+			Type:     attType,
+			FilePath: mediaPath,
+			MimeType: mime,
+		})
+	}
+	return attachments
+}
+
+func mapStringFromMeta(meta map[string]any, key string) map[string]string {
+	if len(meta) == 0 {
+		return nil
+	}
+	raw, ok := meta[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	if typed, ok := raw.(map[string]string); ok {
+		return typed
+	}
+	generic, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(generic))
+	for k, v := range generic {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
 }

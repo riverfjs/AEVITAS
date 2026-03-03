@@ -30,6 +30,7 @@ type TelegramBot interface {
 	StopReceivingUpdates()
 	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
 	EditMessageText(chatID int64, messageID int, text string) (tgbotapi.Message, error)
+	DeleteMessage(chatID int64, messageID int) error
 	GetSelf() tgbotapi.User
 	GetFileDirectURL(fileID string) (string, error)
 }
@@ -54,6 +55,12 @@ func (w *tgBotWrapper) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 func (w *tgBotWrapper) EditMessageText(chatID int64, messageID int, text string) (tgbotapi.Message, error) {
 	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
 	return w.bot.Send(edit)
+}
+
+func (w *tgBotWrapper) DeleteMessage(chatID int64, messageID int) error {
+	del := tgbotapi.NewDeleteMessage(chatID, messageID)
+	_, err := w.bot.Request(del)
+	return err
 }
 
 func (w *tgBotWrapper) GetSelf() tgbotapi.User {
@@ -95,6 +102,7 @@ type previewState struct {
 	toolBlockIndex int
 	toolEntries    []toolEntry
 	hadToolProgress bool
+	finalized      bool
 }
 
 type toolEntry struct {
@@ -198,8 +206,10 @@ func (t *TelegramChannel) handleMessage(msg *tgbotapi.Message) {
 		content = msg.Caption
 	}
 
-	// Download photos if present
+	// Download media if present
 	var media []string
+	mediaTypes := map[string]string{}
+	mediaMIMEs := map[string]string{}
 	if msg.Photo != nil && len(msg.Photo) > 0 {
 		// Get largest photo
 		photo := msg.Photo[len(msg.Photo)-1]
@@ -208,11 +218,52 @@ func (t *TelegramChannel) handleMessage(msg *tgbotapi.Message) {
 			t.logger.Warnf("failed to download photo: %v", err)
 		} else {
 			media = append(media, localPath)
+			mediaTypes[localPath] = "image"
+			mediaMIMEs[localPath] = "image/jpeg"
 			t.logger.Debugf("downloaded photo to %s", localPath)
 		}
-		// If no text, provide default prompt
-		if content == "" {
-			content = "请分析这张图片"
+	}
+	if msg.Voice != nil && strings.TrimSpace(msg.Voice.FileID) != "" {
+		localPath, err := t.downloadFile(msg.Voice.FileID, "voice")
+		if err != nil {
+			t.logger.Warnf("failed to download voice: %v", err)
+		} else {
+			media = append(media, localPath)
+			mediaTypes[localPath] = "audio"
+			mediaMIMEs[localPath] = strings.TrimSpace(msg.Voice.MimeType)
+			t.logger.Debugf("downloaded voice to %s", localPath)
+		}
+	}
+	if msg.Audio != nil && strings.TrimSpace(msg.Audio.FileID) != "" {
+		localPath, err := t.downloadFile(msg.Audio.FileID, "audio")
+		if err != nil {
+			t.logger.Warnf("failed to download audio: %v", err)
+		} else {
+			media = append(media, localPath)
+			mediaTypes[localPath] = "audio"
+			mediaMIMEs[localPath] = strings.TrimSpace(msg.Audio.MimeType)
+			t.logger.Debugf("downloaded audio to %s", localPath)
+		}
+	}
+	if msg.Document != nil && strings.TrimSpace(msg.Document.FileID) != "" {
+		mime := strings.ToLower(strings.TrimSpace(msg.Document.MimeType))
+		kind := ""
+		switch {
+		case strings.HasPrefix(mime, "audio/"):
+			kind = "audio"
+		case strings.HasPrefix(mime, "image/"):
+			kind = "image"
+		}
+		if kind != "" {
+			localPath, err := t.downloadFile(msg.Document.FileID, kind)
+			if err != nil {
+				t.logger.Warnf("failed to download %s document: %v", kind, err)
+			} else {
+				media = append(media, localPath)
+				mediaTypes[localPath] = kind
+				mediaMIMEs[localPath] = mime
+				t.logger.Debugf("downloaded %s document to %s", kind, localPath)
+			}
 		}
 	}
 
@@ -253,10 +304,12 @@ func (t *TelegramChannel) handleMessage(msg *tgbotapi.Message) {
 		Media:     media,
 		Timestamp: time.Unix(int64(msg.Date), 0),
 		Metadata: map[string]any{
-			"username":      msg.From.UserName,
-			"first_name":    msg.From.FirstName,
-			"message_id":    msg.MessageID,
-			"stop_typing":   stopTyping, // Pass channel to gateway to stop typing
+			"username":         msg.From.UserName,
+			"first_name":       msg.From.FirstName,
+			"message_id":       msg.MessageID,
+			"stop_typing":      stopTyping, // Pass channel to gateway to stop typing
+			"media_types":      mediaTypes,
+			"media_mime_types": mediaMIMEs,
 		},
 	}
 }
@@ -323,6 +376,8 @@ func (t *TelegramChannel) Send(msg bus.OutboundMessage) error {
 	if err != nil {
 		return fmt.Errorf("invalid chat id %q: %w", msg.ChatID, err)
 	}
+	event := telegramEvent(msg.Metadata)
+	t.logger.Infof("[telegram] dispatch chat=%d event=%s text_len=%d media_count=%d", chatID, event, len(strings.TrimSpace(msg.Content)), len(msg.Media))
 
 	// Send media files first (if any)
 	for _, mediaPath := range msg.Media {
@@ -334,7 +389,7 @@ func (t *TelegramChannel) Send(msg bus.OutboundMessage) error {
 
 	// Send text content if present
 	if msg.Content != "" {
-		switch telegramEvent(msg.Metadata) {
+		switch event {
 		case telegramEventPreviewUpdate:
 			return t.sendPreview(chatID, msg.Content, "update")
 		case telegramEventPreviewFinal:
@@ -361,6 +416,7 @@ func telegramEvent(meta map[string]any) string {
 func (t *TelegramChannel) sendPreview(chatID int64, content, mode string) error {
 	isFinal := mode == "final"
 	if isFinal {
+		t.logger.Infof("[telegram] preview final start chat=%d content_len=%d", chatID, len(strings.TrimSpace(content)))
 		return t.finalizePreview(chatID, content)
 	}
 
@@ -378,11 +434,8 @@ func (t *TelegramChannel) sendPreview(chatID int64, content, mode string) error 
 		return nil
 	}
 
-	if _, err := t.bot.EditMessageText(chatID, state.draftMessageID, text); err != nil {
-		msg := strings.ToLower(err.Error())
-		if strings.Contains(msg, "message is not modified") {
-			return nil
-		}
+	edited, err := t.editPreviewText(chatID, state.draftMessageID, text)
+	if err != nil {
 		m, sendErr := t.bot.Send(tgbotapi.NewMessage(chatID, text))
 		if sendErr != nil {
 			return fmt.Errorf("edit preview: %w; fallback send: %v", err, sendErr)
@@ -396,8 +449,12 @@ func (t *TelegramChannel) sendPreview(chatID int64, content, mode string) error 
 			toolBlockIndex: state.toolBlockIndex,
 			toolEntries:    state.toolEntries,
 			hadToolProgress: state.hadToolProgress,
+			finalized:      state.finalized,
 		}
 		t.previewMu.Unlock()
+		return nil
+	}
+	if !edited {
 		return nil
 	}
 
@@ -410,6 +467,7 @@ func (t *TelegramChannel) sendPreview(chatID int64, content, mode string) error 
 		toolBlockIndex: state.toolBlockIndex,
 		toolEntries:    state.toolEntries,
 		hadToolProgress: state.hadToolProgress,
+		finalized:      state.finalized,
 	}
 	t.previewMu.Unlock()
 	return nil
@@ -419,6 +477,11 @@ func (t *TelegramChannel) finalizePreview(chatID int64, content string) error {
 	t.previewMu.Lock()
 	state := t.previewMsg[chatID]
 	t.previewMu.Unlock()
+	if state.finalized && state.draftMessageID == 0 {
+		// Idempotent finalization: ignore duplicated final events.
+		t.logger.Infof("[telegram] preview final skipped chat=%d reason=already_finalized", chatID)
+		return nil
+	}
 
 	ctx := context.Background()
 	const maxUTF16Len = 4090
@@ -430,15 +493,55 @@ func (t *TelegramChannel) finalizePreview(chatID int64, content string) error {
 		return nil
 	}
 
+	if err := t.applyFinalContents(chatID, state, contents); err != nil {
+		return err
+	}
+
+	// Keep the tool block state after finalization so post-final metadata
+	// (e.g. usage HUD) can still append to the active turn summary.
+	t.previewMu.Lock()
+	cur := t.previewMsg[chatID]
+	if !state.hadToolProgress && state.toolMessageID != 0 {
+		if err := t.bot.DeleteMessage(chatID, state.toolMessageID); err != nil {
+			t.logger.Warnf("[telegram] delete empty tool block failed: %v", err)
+		}
+		cur.toolMessageID = 0
+		cur.toolBlockIndex = 0
+		cur.toolEntries = nil
+		cur.hadToolProgress = false
+	}
+	cur.draftMessageID = 0
+	cur.lastDraftText = ""
+	cur.lastEditAt = time.Now()
+	cur.finalized = true
+	if cur.toolMessageID == 0 && state.toolMessageID != 0 && state.hadToolProgress {
+		cur.toolMessageID = state.toolMessageID
+		cur.toolBlockIndex = state.toolBlockIndex
+		cur.toolEntries = state.toolEntries
+		cur.hadToolProgress = state.hadToolProgress
+	}
+	t.previewMsg[chatID] = cur
+	t.previewMu.Unlock()
+	return nil
+}
+
+func (t *TelegramChannel) applyFinalContents(chatID int64, state previewState, contents []telegramify.Content) error {
 	usedPreview := false
 	for _, item := range contents {
 		switch c := item.(type) {
 		case *telegramify.Text:
 			if !usedPreview && state.draftMessageID != 0 {
-				if err := t.editPreviewWithTextContent(chatID, state.draftMessageID, c); err == nil {
+				edited, err := t.editPreviewWithTextContent(chatID, state.draftMessageID, c)
+				if err == nil {
+					if edited {
+						t.logger.Infof("[telegram] preview final applied via edit chat=%d", chatID)
+					} else {
+						t.logger.Infof("[telegram] preview final no-op edit chat=%d", chatID)
+					}
 					usedPreview = true
 					continue
 				}
+				t.logger.Warnf("[telegram] preview final edit failed chat=%d err=%v", chatID, err)
 			}
 			if err := t.sendTextContent(chatID, c); err != nil {
 				return err
@@ -463,22 +566,6 @@ func (t *TelegramChannel) finalizePreview(chatID int64, content string) error {
 			t.logger.Warnf("[telegram] unknown content type: %T", item)
 		}
 	}
-
-	// Keep the tool block state after finalization so post-final metadata
-	// (e.g. usage HUD) can still append to the active turn summary.
-	t.previewMu.Lock()
-	cur := t.previewMsg[chatID]
-	cur.draftMessageID = 0
-	cur.lastDraftText = ""
-	cur.lastEditAt = time.Now()
-	if cur.toolMessageID == 0 && state.toolMessageID != 0 {
-		cur.toolMessageID = state.toolMessageID
-		cur.toolBlockIndex = state.toolBlockIndex
-		cur.toolEntries = state.toolEntries
-		cur.hadToolProgress = state.hadToolProgress
-	}
-	t.previewMsg[chatID] = cur
-	t.previewMu.Unlock()
 	return nil
 }
 
@@ -504,6 +591,7 @@ func (t *TelegramChannel) ensureTurnState(chatID int64) (previewState, error) {
 		toolMessageID:  toolMsgID,
 		toolBlockIndex: 1,
 		hadToolProgress: false,
+		finalized:      false,
 	}
 	t.previewMu.Lock()
 	t.previewMsg[chatID] = state
@@ -706,6 +794,8 @@ func (t *TelegramChannel) sendMediaFile(chatID int64, filePath string) error {
 	// Detect if it's an image or document
 	ext := strings.ToLower(filepath.Ext(filePath))
 	isImage := ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp"
+	isVoice := ext == ".ogg" || ext == ".opus"
+	isAudio := isVoice || ext == ".mp3" || ext == ".wav" || ext == ".m4a" || ext == ".aac" || ext == ".flac"
 
 	if isImage {
 		// Send as photo; fall back to document when Telegram rejects the image
@@ -723,6 +813,28 @@ func (t *TelegramChannel) sendMediaFile(chatID int64, filePath string) error {
 		} else {
 			t.logger.Infof("sent photo to telegram chat_id=%d path=%s", chatID, filePath)
 		}
+	} else if isAudio {
+		if isVoice {
+			voice := tgbotapi.NewVoice(chatID, tgbotapi.FilePath(filePath))
+			voice.Caption = filepath.Base(filePath)
+			if _, err := t.bot.Send(voice); err == nil {
+				t.logger.Infof("sent voice to telegram chat_id=%d path=%s", chatID, filePath)
+				return nil
+			}
+		}
+		audio := tgbotapi.NewAudio(chatID, tgbotapi.FilePath(filePath))
+		audio.Caption = filepath.Base(filePath)
+		if _, err := t.bot.Send(audio); err == nil {
+			t.logger.Infof("sent audio to telegram chat_id=%d path=%s", chatID, filePath)
+			return nil
+		}
+		// Fallback to document
+		doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
+		doc.Caption = filepath.Base(filePath)
+		if _, err := t.bot.Send(doc); err != nil {
+			return fmt.Errorf("send telegram audio/document fallback: %w", err)
+		}
+		t.logger.Infof("sent audio as document to telegram chat_id=%d path=%s", chatID, filePath)
 	} else {
 		// Send as document using FileBytes so the display name is always the
 		// symlink name (e.g. "aevitas.log") rather than the symlink target
@@ -840,19 +952,52 @@ func toTelegramEntities(entities []telegramify.MessageEntity) []tgbotapi.Message
 	return tgEntities
 }
 
-func (t *TelegramChannel) editPreviewWithTextContent(chatID int64, messageID int, text *telegramify.Text) error {
+func (t *TelegramChannel) editPreviewWithTextContent(chatID int64, messageID int, text *telegramify.Text) (bool, error) {
 	if text == nil {
-		return nil
+		return false, nil
 	}
 	msgText := strings.TrimSpace(text.Text)
 	if msgText == "" {
-		return nil
+		return false, nil
 	}
-	_, err := t.bot.EditMessageText(chatID, messageID, msgText)
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, msgText)
+	edit.Entities = toTelegramEntities(text.Entities)
+	_, err := t.bot.Send(edit)
 	if err != nil {
-		return fmt.Errorf("edit preview text: %w", err)
+		if isIgnorableEditError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("edit preview text: %w", err)
 	}
-	return nil
+	edited := true
+	if len(edit.Entities) == 0 {
+		// No entities on final text is still valid; keep behavior explicit.
+		edited = true
+	}
+	return edited, nil
+}
+
+func (t *TelegramChannel) editPreviewText(chatID int64, messageID int, text string) (bool, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false, nil
+	}
+	_, err := t.bot.EditMessageText(chatID, messageID, text)
+	if err != nil {
+		if isIgnorableEditError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func isIgnorableEditError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(msg, "message is not modified")
 }
 
 // sendFileContent sends a file (e.g., code block)

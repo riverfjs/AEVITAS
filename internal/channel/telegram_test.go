@@ -296,7 +296,11 @@ type mockTelegramBot struct {
 	stopped     bool
 	sentMsgs    []tgbotapi.Chattable
 	edited      []tgbotapi.EditMessageTextConfig
+	deleted     []tgbotapi.DeleteMessageConfig
 	sendErr     error
+	sendEditErr error
+	editErr     error
+	deleteErr   error
 	self        tgbotapi.User
 }
 
@@ -317,6 +321,9 @@ func (m *mockTelegramBot) StopReceivingUpdates() {
 
 func (m *mockTelegramBot) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 	if edit, ok := c.(tgbotapi.EditMessageTextConfig); ok {
+		if m.sendEditErr != nil {
+			return tgbotapi.Message{}, m.sendEditErr
+		}
 		m.edited = append(m.edited, edit)
 	}
 	m.sentMsgs = append(m.sentMsgs, c)
@@ -327,11 +334,22 @@ func (m *mockTelegramBot) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 }
 
 func (m *mockTelegramBot) EditMessageText(chatID int64, messageID int, text string) (tgbotapi.Message, error) {
+	if m.editErr != nil {
+		return tgbotapi.Message{}, m.editErr
+	}
 	if m.sendErr != nil {
 		return tgbotapi.Message{}, m.sendErr
 	}
 	m.edited = append(m.edited, tgbotapi.NewEditMessageText(chatID, messageID, text))
 	return tgbotapi.Message{MessageID: messageID}, nil
+}
+
+func (m *mockTelegramBot) DeleteMessage(chatID int64, messageID int) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	m.deleted = append(m.deleted, tgbotapi.NewDeleteMessage(chatID, messageID))
+	return nil
 }
 
 func (m *mockTelegramBot) GetSelf() tgbotapi.User {
@@ -478,6 +496,111 @@ func TestTelegramChannel_Send_PreviewUpdateThenFinal(t *testing.T) {
 	if len(mockBot.edited) < 1 {
 		t.Fatalf("expected final preview to edit draft block, got %d edits", len(mockBot.edited))
 	}
+	if len(mockBot.deleted) == 0 {
+		t.Fatalf("expected empty tool placeholder to be deleted on final")
+	}
+}
+
+func TestTelegramChannel_Send_PreviewFinal_WithToolProgress_DoesNotDeleteToolBlock(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "draft",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewUpdate},
+	}); err != nil {
+		t.Fatalf("preview update failed: %v", err)
+	}
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  `{"query":"abc"}`,
+		Metadata: map[string]any{telegramEventKey: telegramEventToolProgress, "tool_name": "WebSearch"},
+	}); err != nil {
+		t.Fatalf("tool progress failed: %v", err)
+	}
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "final",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewFinal},
+	}); err != nil {
+		t.Fatalf("preview final failed: %v", err)
+	}
+	if len(mockBot.deleted) != 0 {
+		t.Fatalf("expected tool block to remain when had tool progress")
+	}
+}
+
+func TestTelegramChannel_Send_PreviewFinal_NotModified_DoesNotFallbackSend(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "same final text",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewUpdate},
+	}); err != nil {
+		t.Fatalf("preview update failed: %v", err)
+	}
+
+	beforeSends := len(mockBot.sentMsgs)
+	mockBot.sendEditErr = fmt.Errorf("Bad Request: message is not modified")
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "same final text",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewFinal},
+	}); err != nil {
+		t.Fatalf("preview final failed: %v", err)
+	}
+	if len(mockBot.sentMsgs) != beforeSends {
+		t.Fatalf("expected no fallback send when message not modified, got sends %d -> %d", beforeSends, len(mockBot.sentMsgs))
+	}
+}
+
+func TestTelegramChannel_Send_DuplicatePreviewFinal_IsIdempotent(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "draft",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewUpdate},
+	}); err != nil {
+		t.Fatalf("preview update failed: %v", err)
+	}
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "final once",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewFinal},
+	}); err != nil {
+		t.Fatalf("first preview final failed: %v", err)
+	}
+
+	sentCount := len(mockBot.sentMsgs)
+	editedCount := len(mockBot.edited)
+	deletedCount := len(mockBot.deleted)
+
+	if err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		Content:  "final once",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewFinal},
+	}); err != nil {
+		t.Fatalf("duplicate preview final failed: %v", err)
+	}
+
+	if len(mockBot.sentMsgs) != sentCount || len(mockBot.edited) != editedCount || len(mockBot.deleted) != deletedCount {
+		t.Fatalf("duplicate final should be no-op, got sent=%d->%d edited=%d->%d deleted=%d->%d",
+			sentCount, len(mockBot.sentMsgs), editedCount, len(mockBot.edited), deletedCount, len(mockBot.deleted))
+	}
 }
 
 func TestTelegramChannel_Send_PreviewUpdateEditsExisting(t *testing.T) {
@@ -548,6 +671,10 @@ func TestTelegramChannel_Send_PreviewFinalCodeBlockUsesFinalizePipeline(t *testi
 	}
 	if len(mockBot.sentMsgs) < 1 {
 		t.Fatalf("expected at least one send call, got %d", len(mockBot.sentMsgs))
+	}
+	lastEdit := mockBot.edited[len(mockBot.edited)-1]
+	if len(lastEdit.Entities) == 0 {
+		t.Fatalf("expected preview final edit to include entities for code block rendering")
 	}
 }
 

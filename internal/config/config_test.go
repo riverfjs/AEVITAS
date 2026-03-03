@@ -12,8 +12,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("DefaultConfig returned nil")
 	}
-	if cfg.Agent.Model != DefaultModel {
-		t.Errorf("model = %q, want %q", cfg.Agent.Model, DefaultModel)
+	if cfg.Agent.Model.Primary != DefaultModel {
+		t.Errorf("model.primary = %q, want %q", cfg.Agent.Model.Primary, DefaultModel)
 	}
 	if cfg.Agent.MaxTokens != DefaultMaxTokens {
 		t.Errorf("maxTokens = %d, want %d", cfg.Agent.MaxTokens, DefaultMaxTokens)
@@ -63,8 +63,8 @@ func TestLoadConfig_NoFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
-	if cfg.Agent.Model != DefaultModel {
-		t.Errorf("expected default model %q, got %q", DefaultModel, cfg.Agent.Model)
+	if cfg.Agent.Model.Primary != DefaultModel {
+		t.Errorf("expected default model %q, got %q", DefaultModel, cfg.Agent.Model.Primary)
 	}
 }
 
@@ -106,8 +106,8 @@ func TestLoadConfig_FromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
-	if cfg.Agent.Model != "claude-opus-4-20250514" {
-		t.Errorf("model = %q, want claude-opus-4-20250514", cfg.Agent.Model)
+	if cfg.Agent.Model.Primary != "claude-opus-4-20250514" {
+		t.Errorf("model.primary = %q, want claude-opus-4-20250514", cfg.Agent.Model.Primary)
 	}
 	if cfg.Agent.MaxTokens != 4096 {
 		t.Errorf("maxTokens = %d, want 4096", cfg.Agent.MaxTokens)
@@ -123,6 +123,38 @@ func TestLoadConfig_FromFile(t *testing.T) {
 	}
 	if cfg.Agent.TokenTracking.Enabled {
 		t.Error("tokenTracking.enabled = true, want false")
+	}
+}
+
+func TestLoadConfig_ModelObjectWithFallbacks(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	t.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	cfgDir := filepath.Join(tmpDir, ".aevitas")
+	os.MkdirAll(cfgDir, 0755)
+
+	testCfg := map[string]any{
+		"agent": map[string]any{
+			"model": map[string]any{
+				"primary":   "anthropic/claude-opus-4.6",
+				"fallbacks": []string{"anthropic/claude-sonnet-4.5", "openai/gpt-4o"},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(testCfg, "", "  ")
+	os.WriteFile(filepath.Join(cfgDir, "config.json"), data, 0644)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig error: %v", err)
+	}
+	if cfg.Agent.Model.Primary != "anthropic/claude-opus-4.6" {
+		t.Fatalf("model.primary = %q", cfg.Agent.Model.Primary)
+	}
+	if len(cfg.Agent.Model.Fallbacks) != 2 {
+		t.Fatalf("fallback count = %d, want 2", len(cfg.Agent.Model.Fallbacks))
 	}
 }
 

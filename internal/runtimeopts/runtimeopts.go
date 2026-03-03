@@ -13,14 +13,14 @@ func NewProvider(cfg *config.Config) api.ModelFactory {
 		return &model.OpenAIProvider{
 			APIKey:    cfg.Provider.APIKey,
 			BaseURL:   cfg.Provider.BaseURL,
-			ModelName: cfg.Agent.Model,
+			ModelName: cfg.Agent.Model.Primary,
 			MaxTokens: cfg.Agent.MaxTokens,
 		}
 	default: // "anthropic" or empty
 		return &model.AnthropicProvider{
 			APIKey:    cfg.Provider.APIKey,
 			BaseURL:   cfg.Provider.BaseURL,
-			ModelName: cfg.Agent.Model,
+			ModelName: cfg.Agent.Model.Primary,
 			MaxTokens: cfg.Agent.MaxTokens,
 		}
 	}
@@ -53,6 +53,31 @@ func BuildAPIOptions(cfg *config.Config, provider api.ModelFactory, sysPrompt st
 			Enabled:   cfg.Agent.Compaction.Enabled,
 			Threshold: cfg.Agent.Compaction.Threshold,
 		},
+		Voice: api.VoiceConfig{
+			Enabled: cfg.Voice.Enabled,
+			ASR: api.VoiceASRConfig{
+				Enabled:           cfg.Voice.ASR.Enabled,
+				Provider:          cfg.Voice.ASR.Provider,
+				APIKey:            cfg.Voice.ASR.APIKey,
+				BaseURL:           cfg.Voice.ASR.BaseURL,
+				SpeechModels:      cfg.Voice.ASR.SpeechModels,
+				LanguageDetection: cfg.Voice.ASR.LanguageDetection,
+				PollIntervalSec:   cfg.Voice.ASR.PollIntervalSec,
+				TimeoutSec:        cfg.Voice.ASR.TimeoutSec,
+			},
+			TTS: api.VoiceTTSConfig{
+				Enabled:    cfg.Voice.TTS.Enabled,
+				Provider:   cfg.Voice.TTS.Provider,
+				Voice:      cfg.Voice.TTS.Voice,
+				Rate:       cfg.Voice.TTS.Rate,
+				Volume:     cfg.Voice.TTS.Volume,
+				Pitch:      cfg.Voice.TTS.Pitch,
+				OutputDir:  cfg.Voice.TTS.OutputDir,
+				TimeoutSec: cfg.Voice.TTS.TimeoutSec,
+			},
+		},
+		PrimaryModelName:          cfg.Agent.Model.Primary,
+		PrimaryFallbackModels:      cfg.Agent.Model.Fallbacks,
 		ContextWindowTokens:        cfg.Agent.ContextWindow.Tokens,
 		ContextWindowWarnRatio:     cfg.Agent.ContextWindow.WarnRatio,
 		ContextWindowHardMinTokens: cfg.Agent.ContextWindow.HardMinTokens,

@@ -6,7 +6,7 @@ require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/lestrrat-go/file-rotatelogs v2.4.0+incompatible
-	github.com/riverfjs/agentsdk-go v0.1.5
+	github.com/riverfjs/agentsdk-go v0.1.8
 	github.com/riverfjs/telegramify-go v0.1.7
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
@@ -15,6 +15,7 @@ require (
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.22.0 // indirect
+	github.com/bytectlgo/edge-tts v1.0.5 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect

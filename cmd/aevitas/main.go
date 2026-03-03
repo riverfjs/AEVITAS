@@ -320,7 +320,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Config: %s\n", config.ConfigPath())
 	fmt.Printf("Workspace: %s\n", cfg.Agent.Workspace)
-	fmt.Printf("Model: %s\n", cfg.Agent.Model)
+	modelLine := cfg.Agent.Model.Primary
+	if len(cfg.Agent.Model.Fallbacks) > 0 {
+		modelLine = fmt.Sprintf("%s (+%d fallback)", modelLine, len(cfg.Agent.Model.Fallbacks))
+	}
+	fmt.Printf("Model: %s\n", modelLine)
 	fmt.Printf("Provider: %s\n", providerDisplay(cfg.Provider.Type))
 	if cfg.Provider.APIKey != "" && len(cfg.Provider.APIKey) > 8 {
 		masked := cfg.Provider.APIKey[:4] + "..." + cfg.Provider.APIKey[len(cfg.Provider.APIKey)-4:]

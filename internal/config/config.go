@@ -22,13 +22,14 @@ type Config struct {
 	Agent    AgentConfig    `json:"agent"`
 	Channels ChannelsConfig `json:"channels"`
 	Provider ProviderConfig `json:"provider"`
+	Voice    VoiceConfig    `json:"voice,omitempty"`
 	Tools    ToolsConfig    `json:"tools"`
 	Gateway  GatewayConfig  `json:"gateway"`
 }
 
 type AgentConfig struct {
 	Workspace         string  `json:"workspace"`
-	Model             string  `json:"model"`
+	Model             ModelConfig `json:"model"`
 	MaxTokens         int     `json:"maxTokens"`
 	Temperature       float64 `json:"temperature"`
 	MaxToolIterations int     `json:"maxToolIterations"`
@@ -56,6 +57,67 @@ type AgentConfig struct {
 	TokenTracking TokenTrackingConfig `json:"tokenTracking,omitempty"`
 	// Guard controls prompt/output disclosure protections in agentsdk-go.
 	Guard GuardConfig `json:"guard,omitempty"`
+}
+
+// ModelConfig supports legacy string model and structured model config:
+// - "anthropic/claude-opus-4.6"
+// - {"primary":"anthropic/claude-opus-4.6","fallbacks":["anthropic/claude-sonnet-4.5"]}
+// It also accepts single `fallback` for compatibility.
+type ModelConfig struct {
+	Primary   string   `json:"primary,omitempty"`
+	Fallbacks []string `json:"fallbacks,omitempty"`
+}
+
+func (m ModelConfig) MarshalJSON() ([]byte, error) {
+	primary := m.Primary
+	if len(m.Fallbacks) == 0 {
+		return json.Marshal(primary)
+	}
+	type modelAlias struct {
+		Primary   string   `json:"primary"`
+		Fallbacks []string `json:"fallbacks,omitempty"`
+	}
+	return json.Marshal(modelAlias{
+		Primary:   primary,
+		Fallbacks: m.Fallbacks,
+	})
+}
+
+func (m *ModelConfig) UnmarshalJSON(data []byte) error {
+	var rawString string
+	if err := json.Unmarshal(data, &rawString); err == nil {
+		m.Primary = rawString
+		m.Fallbacks = nil
+		return nil
+	}
+	var rawObj struct {
+		Primary   string   `json:"primary"`
+		Fallback  string   `json:"fallback"`
+		Fallbacks []string `json:"fallbacks"`
+	}
+	if err := json.Unmarshal(data, &rawObj); err != nil {
+		return err
+	}
+	m.Primary = rawObj.Primary
+	seen := make(map[string]struct{})
+	candidates := make([]string, 0, len(rawObj.Fallbacks)+1)
+	if rawObj.Fallback != "" {
+		candidates = append(candidates, rawObj.Fallback)
+	}
+	candidates = append(candidates, rawObj.Fallbacks...)
+	m.Fallbacks = m.Fallbacks[:0]
+	for _, candidate := range candidates {
+		trimmed := candidate
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		m.Fallbacks = append(m.Fallbacks, trimmed)
+	}
+	return nil
 }
 
 type GuardConfig struct {
@@ -125,6 +187,34 @@ type ProviderConfig struct {
 	BaseURL string `json:"baseUrl,omitempty"`
 }
 
+type VoiceConfig struct {
+	Enabled bool            `json:"enabled"`
+	ASR     VoiceASRConfig  `json:"asr,omitempty"`
+	TTS     VoiceTTSConfig  `json:"tts,omitempty"`
+}
+
+type VoiceASRConfig struct {
+	Enabled           bool     `json:"enabled"`
+	Provider          string   `json:"provider,omitempty"` // "assemblyai"
+	APIKey            string   `json:"apiKey,omitempty"`
+	BaseURL           string   `json:"baseUrl,omitempty"`
+	SpeechModels      []string `json:"speechModels,omitempty"`
+	LanguageDetection bool     `json:"languageDetection,omitempty"`
+	PollIntervalSec   int      `json:"pollIntervalSec,omitempty"`
+	TimeoutSec        int      `json:"timeoutSec,omitempty"`
+}
+
+type VoiceTTSConfig struct {
+	Enabled    bool   `json:"enabled"`
+	Provider   string `json:"provider,omitempty"` // "edge"
+	Voice      string `json:"voice,omitempty"`
+	Rate       string `json:"rate,omitempty"`
+	Volume     string `json:"volume,omitempty"`
+	Pitch      string `json:"pitch,omitempty"`
+	OutputDir  string `json:"outputDir,omitempty"`
+	TimeoutSec int    `json:"timeoutSec,omitempty"`
+}
+
 type ChannelsConfig struct {
 	Telegram TelegramConfig `json:"telegram"`
 	Feishu   FeishuConfig   `json:"feishu"`
@@ -173,7 +263,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Agent: AgentConfig{
 			Workspace:         filepath.Join(home, ".aevitas", "workspace"),
-			Model:             DefaultModel,
+			Model:             ModelConfig{Primary: DefaultModel},
 			MaxTokens:         DefaultMaxTokens,
 			Temperature:       DefaultTemperature,
 			MaxToolIterations: DefaultMaxToolIterations,
@@ -185,6 +275,27 @@ func DefaultConfig() *Config {
 			Guard:             GuardConfig{InputEnabled: true, OutputEnabled: true},
 		},
 		Provider: ProviderConfig{},
+		Voice: VoiceConfig{
+			Enabled: false,
+			ASR: VoiceASRConfig{
+				Enabled:           false,
+				Provider:          "assemblyai",
+				BaseURL:           "https://api.assemblyai.com",
+				SpeechModels:      []string{"universal-3-pro", "universal-2"},
+				LanguageDetection: true,
+				PollIntervalSec:   3,
+				TimeoutSec:        120,
+			},
+			TTS: VoiceTTSConfig{
+				Enabled:    false,
+				Provider:   "edge",
+				Voice:      "zh-CN-XiaoxiaoNeural",
+				Rate:       "+0%",
+				Volume:     "+0%",
+				Pitch:      "+0Hz",
+				TimeoutSec: 60,
+			},
+		},
 		Channels: ChannelsConfig{},
 		Tools: ToolsConfig{
 			ExecTimeout:         DefaultExecTimeout,
@@ -260,9 +371,21 @@ func LoadConfig() (*Config, error) {
 	if receiveID := os.Getenv("AEVITAS_WECOM_RECEIVE_ID"); receiveID != "" {
 		cfg.Channels.WeCom.ReceiveID = receiveID
 	}
+	if key := os.Getenv("AEVITAS_VOICE_ASR_API_KEY"); key != "" {
+		cfg.Voice.ASR.APIKey = key
+	}
+	if url := os.Getenv("AEVITAS_VOICE_ASR_BASE_URL"); url != "" {
+		cfg.Voice.ASR.BaseURL = url
+	}
+	if dir := os.Getenv("AEVITAS_VOICE_TTS_OUTPUT_DIR"); dir != "" {
+		cfg.Voice.TTS.OutputDir = dir
+	}
 
 	if cfg.Agent.Workspace == "" {
 		cfg.Agent.Workspace = DefaultConfig().Agent.Workspace
+	}
+	if cfg.Agent.Model.Primary == "" {
+		cfg.Agent.Model.Primary = DefaultConfig().Agent.Model.Primary
 	}
 
 	return cfg, nil
