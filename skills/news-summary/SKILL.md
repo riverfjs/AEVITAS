@@ -7,80 +7,46 @@ description: This skill should be used when the user asks for news updates, dail
 
 ## Overview
 
-Fetch and summarize news from trusted international sources via RSS feeds.
+Use the bundled script to fetch and parse RSS reliably.  
+Do **not** use ad-hoc `curl | python -c` pipelines for this skill.
 
-## RSS Feeds
+## Script
 
-### BBC (Primary)
+Path:
 ```bash
-# World news
-curl -s "https://feeds.bbci.co.uk/news/world/rss.xml"
-
-# Top stories
-curl -s "https://feeds.bbci.co.uk/news/rss.xml"
-
-# Business
-curl -s "https://feeds.bbci.co.uk/news/business/rss.xml"
-
-# Technology
-curl -s "https://feeds.bbci.co.uk/news/technology/rss.xml"
+~/.aevitas/workspace/.claude/skills/news-summary/scripts/fetch_news.py
 ```
 
-### Reuters
+Run:
 ```bash
-# World news
-curl -s "https://www.reutersagency.com/feed/?best-regions=world&post_type=best"
+python3 ~/.aevitas/workspace/.claude/skills/news-summary/scripts/fetch_news.py --group brief --limit 5
 ```
 
-### NPR (US perspective)
+JSON output (for downstream summarization logic):
 ```bash
-curl -s "https://feeds.npr.org/1001/rss.xml"
+python3 ~/.aevitas/workspace/.claude/skills/news-summary/scripts/fetch_news.py --group all --limit 4 --json
 ```
 
-### Al Jazeera (Global South perspective)
-```bash
-curl -s "https://www.aljazeera.com/xml/rss/all.xml"
-```
+## Feed Sets
 
-## Parse RSS
+- `brief`: `world`, `business`, `tech`
+- `all`: `world`, `top`, `business`, `tech`, `reuters`, `npr`, `aljazeera`
 
-Extract titles and descriptions:
+You can also select explicit feeds:
 ```bash
-curl -s "https://feeds.bbci.co.uk/news/world/rss.xml" | \
-  grep -E "<title>|<description>" | \
-  sed 's/<[^>]*>//g' | \
-  sed 's/^[ \t]*//' | \
-  head -30
+python3 ~/.aevitas/workspace/.claude/skills/news-summary/scripts/fetch_news.py --feeds world,reuters,npr --limit 4
 ```
 
 ## Workflow
 
-### Text summary
-1. Fetch BBC world headlines
-2. Optionally supplement with Reuters/NPR
-3. Summarize key stories
-4. Group by region or topic
-
-
-## Example Output Format
-
-```
-📰 News Summary [date]
-
-🌍 WORLD
-- [headline 1]
-- [headline 2]
-
-💼 BUSINESS
-- [headline 1]
-
-💻 TECH
-- [headline 1]
-```
+1. Run the script (`brief` by default).
+2. Build a concise summary from fetched items.
+3. Group by topic and highlight major events.
+4. If user asks for detail, include source links from script output.
 
 ## Best Practices
 
-- Keep summaries concise (5-8 top stories)
-- Prioritize breaking news and major events
-- Balance perspectives (Western + Global South)
-- Cite source if asked
+- Keep to 5-8 top stories unless user asks for more.
+- Prefer script output over manual RSS parsing commands.
+- Balance perspectives (BBC + Reuters/NPR/Al Jazeera).
+- Mention source when content may be controversial.

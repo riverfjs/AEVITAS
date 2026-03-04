@@ -63,12 +63,10 @@ make skills-uninstall <name>  # Uninstall a skill (with y/n confirmation)
 | `make skills-install [name]` | Install skill(s) (name or all) |
 | `make skills-update [name]` | Update skill(s) (name or all) |
 | `make skills-uninstall <name>` | Uninstall a skill (required) |
-| `make tunnel` | Start cloudflared tunnel for Feishu webhook |
 | `make test` | Run tests |
 | `make test-race` | Run tests with race detection |
 | `make test-cover` | Run tests with coverage report |
 | `make docker-up` | Docker build and start |
-| `make docker-up-tunnel` | Docker start with cloudflared tunnel |
 | `make docker-down` | Docker stop |
 | `make lint` | Run golangci-lint |
 
@@ -207,9 +205,6 @@ Run `make setup` for interactive config, or copy `config.example.json` to `~/.ae
       "enabled": false,
       "appId": "",
       "appSecret": "",
-      "verificationToken": "",
-      "encryptKey": "",
-      "port": 9876,
       "allowFrom": []
     },
     "wecom": {
@@ -285,10 +280,9 @@ Quick steps:
 1. Create an app at [Feishu Open Platform](https://open.feishu.cn/app)
 2. Enable **Bot** capability
 3. Add permissions: `im:message`, `im:message:send_as_bot`
-4. Configure Event Subscription URL: `https://your-domain/feishu/webhook`
-5. Subscribe to event: `im.message.receive_v1`
-6. Set `appId`, `appSecret`, `verificationToken` in config
-7. Run `make gateway` and `make tunnel` (for public webhook URL)
+4. Subscribe to event: `im.message.receive_v1`
+5. Set `appId`, `appSecret` in config
+6. Run `make gateway` (no webhook/domain needed in long connection mode)
 
 ### WeCom
 
@@ -318,7 +312,6 @@ docker run -d \
   -e AEVITAS_API_KEY=your-api-key \
   -e AEVITAS_TELEGRAM_TOKEN=your-token \
   -p 18790:18790 \
-  -p 9876:9876 \
   -p 9886:9886 \
   -v aevitas-data:/root/.aevitas \
   aevitas
@@ -334,27 +327,9 @@ cp .env.example .env
 # Start gateway
 docker compose up -d
 
-# Start with cloudflared tunnel (for Feishu webhook)
-docker compose --profile tunnel up -d
-
 # View logs
 docker compose logs -f aevitas
 ```
-
-### Cloudflared Tunnel
-
-For Feishu webhooks, you need a public URL:
-
-```bash
-# Temporary tunnel (dev)
-make tunnel
-
-# Or via docker compose
-docker compose --profile tunnel up -d
-docker compose logs tunnel | grep trycloudflare
-```
-
-Set the output URL + `/feishu/webhook` as your Feishu event subscription URL.
 
 ## Security
 

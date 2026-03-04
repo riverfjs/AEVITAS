@@ -34,15 +34,10 @@ if [[ "$FEISHU_ENABLED" =~ ^[Yy]$ ]]; then
     FEISHU_ENABLED="true"
     read -rp "App ID: " FEISHU_APP_ID
     read -rp "App Secret: " FEISHU_APP_SECRET
-    read -rp "Verification Token (leave empty to skip): " FEISHU_VTOKEN
-    read -rp "Webhook port (default: 9876): " FEISHU_PORT
-    FEISHU_PORT="${FEISHU_PORT:-9876}"
 else
     FEISHU_ENABLED="false"
     FEISHU_APP_ID=""
     FEISHU_APP_SECRET=""
-    FEISHU_VTOKEN=""
-    FEISHU_PORT="9876"
 fi
 
 # Telegram
@@ -111,9 +106,6 @@ cat > "$CONFIG_FILE" <<EOF_JSON
       "enabled": ${FEISHU_ENABLED},
       "appId": "${FEISHU_APP_ID}",
       "appSecret": "${FEISHU_APP_SECRET}",
-      "verificationToken": "${FEISHU_VTOKEN}",
-      "encryptKey": "",
-      "port": ${FEISHU_PORT},
       "allowFrom": []
     },
     "wecom": {
@@ -179,7 +171,7 @@ echo ""
 echo "Next steps:"
 echo "  make gateway    # Start gateway"
 if [ "$FEISHU_ENABLED" = "true" ]; then
-    echo "  make tunnel     # Start cloudflared tunnel for Feishu webhook"
+    echo "  Ensure this host can access Feishu public network (long connection mode)"
 fi
 if [ "$WECOM_ENABLED" = "true" ]; then
     echo "  Configure callback URL to /wecom/bot"

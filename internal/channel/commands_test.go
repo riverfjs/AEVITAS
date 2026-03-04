@@ -423,6 +423,81 @@ func TestCommandHandler_CleanupScanIncludesTempAndTTS(t *testing.T) {
 	}
 }
 
+func TestCommandHandler_HandleRestart_PreparesTrigger(t *testing.T) {
+	tmpHome := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	if err := os.Setenv("HOME", tmpHome); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	defer func() { _ = os.Setenv("HOME", oldHome) }()
+
+	handler := NewCommandHandler(nil, "", 200000)
+	scriptPath := handler.RestartScriptPath()
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0755); err != nil {
+		t.Fatalf("mkdir script dir: %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\n"), 0755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	msg := bus.InboundMessage{
+		Channel:  "feishu",
+		ChatID:   "oc_123",
+		SenderID: "u1",
+		Content:  "/restart",
+	}
+	res := handler.HandleCommand(msg)
+	if !res.Handled {
+		t.Fatal("expected /restart handled")
+	}
+	if !res.Restart {
+		t.Fatal("expected restart action")
+	}
+	want := "🔄 Restarting Gateway\n\nThe gateway will restart in a few seconds. You'll receive a notification when it's back online."
+	if res.Response != want {
+		t.Fatalf("unexpected response: %q", res.Response)
+	}
+	trigger := filepath.Join(tmpHome, ".aevitas", "restart_trigger.txt")
+	data, err := os.ReadFile(trigger)
+	if err != nil {
+		t.Fatalf("read trigger: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "feishu:oc_123" {
+		t.Fatalf("unexpected trigger content: %q", string(data))
+	}
+}
+
+func TestCommandHandler_HandleRestart_NoScript(t *testing.T) {
+	tmpHome := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	if err := os.Setenv("HOME", tmpHome); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	defer func() { _ = os.Setenv("HOME", oldHome) }()
+
+	handler := NewCommandHandler(nil, "", 200000)
+	msg := bus.InboundMessage{
+		Channel:  "telegram",
+		ChatID:   "123",
+		SenderID: "u1",
+		Content:  "/restart",
+	}
+	res := handler.HandleCommand(msg)
+	if !res.Handled {
+		t.Fatal("expected /restart handled")
+	}
+	if res.Restart {
+		t.Fatal("restart should be false when script missing")
+	}
+	if !strings.Contains(res.Response, "Restart script not found") {
+		t.Fatalf("unexpected response: %s", res.Response)
+	}
+	trigger := filepath.Join(tmpHome, ".aevitas", "restart_trigger.txt")
+	if _, err := os.Stat(trigger); !os.IsNotExist(err) {
+		t.Fatalf("trigger file should not exist when restart unavailable: %v", err)
+	}
+}
+
 // Helper function to check if string contains substring
 func contains(s, substr string) bool {
 	if len(substr) == 0 {

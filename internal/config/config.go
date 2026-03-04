@@ -229,13 +229,10 @@ type TelegramConfig struct {
 }
 
 type FeishuConfig struct {
-	Enabled           bool     `json:"enabled"`
-	AppID             string   `json:"appId"`
-	AppSecret         string   `json:"appSecret"`
-	VerificationToken string   `json:"verificationToken"`
-	EncryptKey        string   `json:"encryptKey,omitempty"`
-	Port              int      `json:"port,omitempty"`
-	AllowFrom         []string `json:"allowFrom"`
+	Enabled   bool     `json:"enabled"`
+	AppID     string   `json:"appId"`
+	AppSecret string   `json:"appSecret"`
+	AllowFrom []string `json:"allowFrom"`
 }
 
 type WeComConfig struct {

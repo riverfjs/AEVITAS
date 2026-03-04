@@ -19,7 +19,7 @@ RUN mkdir -p /root/.aevitas/workspace
 
 VOLUME ["/root/.aevitas"]
 
-EXPOSE 18790 9876 9886
+EXPOSE 18790 9886
 
 ENTRYPOINT ["aevitas"]
 CMD ["gateway"]

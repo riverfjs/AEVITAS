@@ -5,15 +5,14 @@ go 1.24.0
 require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 	github.com/lestrrat-go/file-rotatelogs v2.4.0+incompatible
-	github.com/riverfjs/agentsdk-go v0.1.8
+	github.com/riverfjs/agentsdk-go v0.1.9
 	github.com/riverfjs/telegramify-go v0.1.7
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	go.uber.org/zap v1.27.0
 )
-
-replace github.com/riverfjs/agentsdk-go => ../agentsdk-go
 
 require (
 	github.com/RoaringBitmap/roaring/v2 v2.4.5 // indirect
@@ -43,6 +42,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect

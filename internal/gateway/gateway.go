@@ -111,6 +111,12 @@ type Gateway struct {
 	currentReplyTo   string
 	usageMu          sync.Mutex
 	usageNotified    map[string]uint8
+
+	// Optional test hooks for channel state/event observation.
+	waitReadyFn    func(context.Context, string) bool
+	channelStatesFn func() map[string]channel.ChannelState
+	sendNowFn      func(bus.OutboundMessage) error
+	restartFn      func() error
 }
 
 // New creates a Gateway with default options
@@ -341,23 +347,6 @@ func (g *Gateway) buildSystemPrompt() string {
 func (g *Gateway) start(ctx context.Context) error {
 	go g.bus.DispatchOutbound(ctx)
 
-	if err := g.channels.StartAll(ctx); err != nil {
-		return fmt.Errorf("start channels: %w", err)
-	}
-	g.logger.Infof("[gateway] channels started: %v", g.channels.EnabledChannels())
-
-	if err := g.cron.Start(ctx); err != nil {
-		g.logger.Warnf("[gateway] cron start warning: %v", err)
-	}
-
-	go func() {
-		if err := g.hb.Start(ctx); err != nil {
-			g.logger.Errorf("[gateway] heartbeat error: %v", err)
-		}
-	}()
-
-	go g.processLoop(ctx)
-
 	// Start WebSocket RPC server (same protocol as openclaw)
 	rpcAddr := fmt.Sprintf("%s:%d", g.cfg.Gateway.Host, g.cfg.Gateway.Port)
 	rpcSrv := rpc.NewServer(g.logger)
@@ -367,10 +356,24 @@ func (g *Gateway) start(ctx context.Context) error {
 		return fmt.Errorf("rpc server: %w", err)
 	}
 
+	// Start core runtime loops first; channel failures should not block gateway core.
+	if err := g.cron.Start(ctx); err != nil {
+		g.logger.Warnf("[gateway] cron start warning: %v", err)
+	}
+	go func() {
+		if err := g.hb.Start(ctx); err != nil {
+			g.logger.Errorf("[gateway] heartbeat error: %v", err)
+		}
+	}()
+	go g.processLoop(ctx)
+
+	g.channels.StartAll(ctx)
+	g.logger.Infof("[gateway] channels configured: %v", g.channels.EnabledChannels())
+
 	g.logger.Infof("[gateway] running on ws://%s", rpcAddr)
 
 	// Send startup notification
-	g.sendStartupNotification()
+	g.sendStartupNotification(ctx)
 
 	return nil
 }
@@ -416,18 +419,58 @@ func (g *Gateway) processLoop(ctx context.Context) {
 					close(stopTyping)
 				}
 
-				if cmdResult.Response != "" || len(cmdResult.Files) > 0 {
-					meta := map[string]any{}
-					if msg.Channel == "telegram" && strings.TrimSpace(cmdResult.Event) != "" {
-						meta[telegramEventKey] = strings.TrimSpace(cmdResult.Event)
+				meta := map[string]any{}
+				if msg.Channel == "telegram" && strings.TrimSpace(cmdResult.Event) != "" {
+					meta[telegramEventKey] = strings.TrimSpace(cmdResult.Event)
+				}
+				outMsg := bus.OutboundMessage{
+					Channel:  msg.Channel,
+					ChatID:   msg.ChatID,
+					Content:  cmdResult.Response,
+					Media:    cmdResult.Files,
+					Metadata: meta,
+				}
+
+				if cmdResult.Restart {
+					// Keep Telegram restart pre-notice as standalone text.
+					// Feishu keeps default rendering (interactive card).
+					if strings.EqualFold(strings.TrimSpace(msg.Channel), "telegram") {
+						if outMsg.Metadata == nil {
+							outMsg.Metadata = map[string]any{}
+						}
+						outMsg.Metadata[telegramEventKey] = telegramEventUsageHUD
 					}
-					g.bus.Outbound <- bus.OutboundMessage{
-						Channel: msg.Channel,
-						ChatID:  msg.ChatID,
-						Content: cmdResult.Response,
-						Media:   cmdResult.Files,
-						Metadata: meta,
+
+					sendNow := g.sendNowFn
+					if sendNow == nil && g.channels != nil {
+						sendNow = g.channels.SendNow
 					}
+					if sendNow == nil {
+						g.logger.Errorf("[gateway] restart aborted: no direct sender for %s/%s", msg.Channel, msg.ChatID)
+						continue
+					}
+					if err := sendNow(outMsg); err != nil {
+						g.logger.Errorf("[gateway] restart pre-notification failed for %s/%s: %v", msg.Channel, msg.ChatID, err)
+						continue
+					}
+
+					restartNow := g.restartFn
+					if restartNow == nil {
+						restartNow = g.executeRestartScript
+					}
+					if err := restartNow(); err != nil {
+						g.logger.Errorf("[gateway] restart execution failed: %v", err)
+						_ = sendNow(bus.OutboundMessage{
+							Channel: msg.Channel,
+							ChatID:  msg.ChatID,
+							Content: fmt.Sprintf("❌ Failed to restart: %v", err),
+						})
+					}
+					continue
+				}
+
+				if outMsg.Content != "" || len(outMsg.Media) > 0 {
+					g.bus.Outbound <- outMsg
 				}
 				continue
 			}
@@ -477,8 +520,8 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 		Attachments: attachments,
 	}
 
-	// Telegram: prefer stream path with message preview editing.
-	if msg.Channel == "telegram" {
+	// Channels with preview support: prefer stream path with message preview editing.
+	if supportsPreviewStream(msg.Channel) {
 		if handled := g.processAgentStream(ctx, msg, req); handled {
 			return
 		}
@@ -639,7 +682,7 @@ func (g *Gateway) deliverAgentResponse(msg bus.InboundMessage, resp *api.Respons
 	if hookResult.askQuestion != "" {
 		g.logger.Infof("[gateway] AskUserQuestion: %s", truncate(hookResult.askQuestion, 60))
 		meta := map[string]any{}
-		if previewSent && msg.Channel == "telegram" {
+		if previewSent && supportsPreviewStream(msg.Channel) {
 			meta[telegramEventKey] = telegramEventPreviewFinal
 		}
 		g.bus.Outbound <- bus.OutboundMessage{
@@ -666,7 +709,7 @@ func (g *Gateway) deliverAgentResponse(msg bus.InboundMessage, resp *api.Respons
 	if result != "" {
 		g.logger.Infof("[gateway] outbound to %s/%s: %s", msg.Channel, msg.ChatID, truncate(result, 80))
 		meta := map[string]any{}
-		if previewSent && msg.Channel == "telegram" {
+		if previewSent && supportsPreviewStream(msg.Channel) {
 			meta[telegramEventKey] = telegramEventPreviewFinal
 		}
 		g.bus.Outbound <- bus.OutboundMessage{
@@ -691,7 +734,7 @@ func (g *Gateway) deliverAgentResponse(msg bus.InboundMessage, resp *api.Respons
 }
 
 func (g *Gateway) emitTelegramUsageHUD(msg bus.InboundMessage, resp *api.Response) {
-	if msg.Channel != "telegram" || g.runtime == nil {
+	if !supportsPreviewStream(msg.Channel) || g.runtime == nil {
 		return
 	}
 	contextWindowTokens := 0
@@ -732,6 +775,15 @@ func (g *Gateway) emitTelegramUsageHUD(msg bus.InboundMessage, resp *api.Respons
 		Metadata: map[string]any{
 			telegramEventKey: telegramEventUsageHUD,
 		},
+	}
+}
+
+func supportsPreviewStream(channel string) bool {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "telegram", "feishu":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -866,8 +918,20 @@ func (g *Gateway) Shutdown() error {
 	return nil
 }
 
+func (g *Gateway) executeRestartScript() error {
+	if g.cmdHandler == nil {
+		return fmt.Errorf("command handler not initialized")
+	}
+	scriptPath := g.cmdHandler.RestartScriptPath()
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return fmt.Errorf("restart script not found: %s", scriptPath)
+	}
+	cmd := exec.Command("/bin/bash", scriptPath)
+	return cmd.Start()
+}
+
 // sendStartupNotification sends a startup message to the user who triggered restart
-func (g *Gateway) sendStartupNotification() {
+func (g *Gateway) sendStartupNotification(ctx context.Context) {
 	// Check if there's a restart trigger file
 	restartTriggerFile := filepath.Join(os.Getenv("HOME"), ".aevitas", "restart_trigger.txt")
 	data, err := os.ReadFile(restartTriggerFile)
@@ -893,17 +957,51 @@ func (g *Gateway) sendStartupNotification() {
 	startupMsg := fmt.Sprintf("✅ **Gateway Restarted Successfully**\n\nPID: %d\nTime: %s",
 		pid, time.Now().Format("2006-01-02 15:04:05"))
 
-	g.logger.Infof("[gateway] sending restart notification to %s/%s", channelName, chatID)
-
-	// Send notification
-	g.bus.Outbound <- bus.OutboundMessage{
-		Channel: channelName,
-		ChatID:  chatID,
-		Content: startupMsg,
+	isRunning := func(name string) bool {
+		if g.channelStatesFn != nil {
+			if st, ok := g.channelStatesFn()[name]; ok {
+				return st.Running
+			}
+			return false
+		}
+		if g.channels == nil {
+			return false
+		}
+		if st, ok := g.channels.ChannelStates()[name]; ok {
+			return st.Running
+		}
+		return false
 	}
 
-	// Clean up trigger file
-	os.Remove(restartTriggerFile)
+	send := func() {
+		g.logger.Infof("[gateway] sending restart notification to %s/%s", channelName, chatID)
+		g.bus.Outbound <- bus.OutboundMessage{
+			Channel: channelName,
+			ChatID:  chatID,
+			Content: startupMsg,
+		}
+		_ = os.Remove(restartTriggerFile)
+	}
+
+	if isRunning(channelName) {
+		send()
+		return
+	}
+
+	waitReady := g.waitReadyFn
+	if waitReady == nil && g.channels != nil {
+		waitReady = g.channels.WaitReady
+	}
+	if waitReady == nil {
+		g.logger.Warnf("[gateway] startup notification skipped: no channel wait-ready hook for %s/%s", channelName, chatID)
+		return
+	}
+	go func() {
+		if !waitReady(ctx, channelName) {
+			return
+		}
+		send()
+	}()
 }
 
 // heartbeatNotify delivers a heartbeat agent response to the user.

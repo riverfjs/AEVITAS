@@ -844,14 +844,27 @@ func (t *TelegramChannel) sendMediaFile(chatID int64, filePath string) error {
 			t.logger.Infof("sent photo to telegram chat_id=%d path=%s", chatID, filePath)
 		}
 	} else if isAudio {
-		if isVoice {
-			voice := tgbotapi.NewVoice(chatID, tgbotapi.FilePath(filePath))
-			voice.Caption = filepath.Base(filePath)
-			if _, err := t.bot.Send(voice); err == nil {
-				t.logger.Infof("sent voice to telegram chat_id=%d path=%s", chatID, filePath)
-				return nil
+		voicePath := filePath
+		cleanupVoicePath := func() {}
+		if !isVoice {
+			convertedPath, convErr := transcodeToTelegramVoice(filePath)
+			if convErr != nil {
+				t.logger.Warnf("[telegram] audio->voice transcode skipped path=%s err=%v", filePath, convErr)
+			} else {
+				voicePath = convertedPath
+				cleanupVoicePath = func() { _ = os.Remove(convertedPath) }
+				t.logger.Infof("[telegram] audio transcoded for voice path=%s converted=%s", filePath, convertedPath)
 			}
 		}
+		voice := tgbotapi.NewVoice(chatID, tgbotapi.FilePath(voicePath))
+		voice.Caption = filepath.Base(filePath)
+		if _, err := t.bot.Send(voice); err == nil {
+			cleanupVoicePath()
+			t.logger.Infof("sent voice to telegram chat_id=%d path=%s", chatID, filePath)
+			return nil
+		}
+		cleanupVoicePath()
+		t.logger.Warnf("[telegram] send voice failed, fallback to audio path=%s", filePath)
 		audio := tgbotapi.NewAudio(chatID, tgbotapi.FilePath(filePath))
 		audio.Caption = filepath.Base(filePath)
 		if _, err := t.bot.Send(audio); err == nil {

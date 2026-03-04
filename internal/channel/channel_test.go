@@ -3,7 +3,9 @@ package channel
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	sdklogger "github.com/riverfjs/agentsdk-go/pkg/logger"
 	"github.com/riverfjs/aevitas/internal/bus"
@@ -65,9 +67,7 @@ func TestChannelManager_StartAll_Empty(t *testing.T) {
 	m, _ := NewChannelManager(config.ChannelsConfig{}, b, sdklogger.NewDefault())
 
 	ctx := context.Background()
-	if err := m.StartAll(ctx); err != nil {
-		t.Errorf("StartAll error: %v", err)
-	}
+	m.StartAll(ctx)
 }
 
 func TestChannelManager_StopAll_Empty(t *testing.T) {
@@ -108,20 +108,21 @@ func (m *mockChannel) Send(msg bus.OutboundMessage) error {
 }
 
 func TestChannelManager_WithMockChannel(t *testing.T) {
-	b := bus.NewMessageBus(10)
-
 	mock := &mockChannel{name: "mock"}
 
 	m := &ChannelManager{
 		channels: map[string]Channel{"mock": mock},
-		bus:      b,
 		logger:   sdklogger.NewDefault(),
 	}
+	m.readyCond = sync.NewCond(&m.mu)
 
 	// Test StartAll
-	ctx := context.Background()
-	if err := m.StartAll(ctx); err != nil {
-		t.Errorf("StartAll error: %v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.StartAll(ctx)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for !mock.started && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
 	}
 	if !mock.started {
 		t.Error("mock channel should be started")
@@ -143,33 +144,72 @@ func TestChannelManager_WithMockChannel(t *testing.T) {
 }
 
 func TestChannelManager_StartAll_Error(t *testing.T) {
-	b := bus.NewMessageBus(10)
-
 	mock := &mockChannel{name: "mock", startErr: fmt.Errorf("start failed")}
 
 	m := &ChannelManager{
 		channels: map[string]Channel{"mock": mock},
-		bus:      b,
 		logger:   sdklogger.NewDefault(),
 	}
+	m.readyCond = sync.NewCond(&m.mu)
 
-	ctx := context.Background()
-	err := m.StartAll(ctx)
-	if err == nil {
-		t.Error("expected error from StartAll")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.StartAll(ctx)
+	time.Sleep(50 * time.Millisecond)
+	st := m.ChannelStates()["mock"]
+	if st.RetryCount == 0 {
+		t.Fatal("expected retry count > 0 when start fails")
+	}
+	if st.LastError == "" {
+		t.Fatal("expected last error to be recorded")
 	}
 }
 
-func TestChannelManager_StopAll_Error(t *testing.T) {
-	b := bus.NewMessageBus(10)
+func TestChannelManager_StartAll_StopsAfterMaxRetries(t *testing.T) {
+	mock := &mockChannel{name: "mock", startErr: fmt.Errorf("always fail")}
+	m := &ChannelManager{
+		channels: map[string]Channel{"mock": mock},
+		logger:   sdklogger.NewDefault(),
+	}
+	m.readyCond = sync.NewCond(&m.mu)
+	oldInitial := channelStartBackoffInitial
+	oldMax := channelStartBackoffMax
+	oldRetries := channelStartMaxRetries
+	channelStartBackoffInitial = 5 * time.Millisecond
+	channelStartBackoffMax = 20 * time.Millisecond
+	channelStartMaxRetries = 5
+	defer func() {
+		channelStartBackoffInitial = oldInitial
+		channelStartBackoffMax = oldMax
+		channelStartMaxRetries = oldRetries
+	}()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.StartAll(ctx)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		st := m.ChannelStates()["mock"]
+		if st.RetryCount >= 5 {
+			if st.RetryCount != 5 {
+				t.Fatalf("retry count should stop at 5, got %d", st.RetryCount)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("expected retry count to reach 5, got %d", m.ChannelStates()["mock"].RetryCount)
+}
+
+func TestChannelManager_StopAll_Error(t *testing.T) {
 	mock := &mockChannel{name: "mock", stopErr: fmt.Errorf("stop failed")}
 
 	m := &ChannelManager{
 		channels: map[string]Channel{"mock": mock},
-		bus:      b,
 		logger:   sdklogger.NewDefault(),
 	}
+	m.readyCond = sync.NewCond(&m.mu)
 
 	// Should not return error (errors are logged)
 	if err := m.StopAll(); err != nil {

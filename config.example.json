@@ -82,9 +82,6 @@
       "enabled": false,
       "appId": "",
       "appSecret": "",
-      "verificationToken": "",
-      "encryptKey": "",
-      "port": 8080,
       "allowFrom": []
     },
     "wecom": {

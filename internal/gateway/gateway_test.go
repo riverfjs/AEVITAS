@@ -764,7 +764,7 @@ func TestGateway_Run_WithSignalChan(t *testing.T) {
 	}
 }
 
-func TestGateway_Run_ChannelStartError(t *testing.T) {
+func TestGateway_Run_ChannelStartError_DoesNotBlockCoreStartup(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := &config.Config{
@@ -794,10 +794,22 @@ func TestGateway_Run_ChannelStartError(t *testing.T) {
 		t.Fatalf("NewWithOptions error: %v", err)
 	}
 
-	// Run should return error from channel start
-	err = g.Run(context.Background())
-	if err == nil {
-		t.Error("expected error from channel start")
+	done := make(chan error, 1)
+	go func() {
+		done <- g.Run(context.Background())
+	}()
+
+	// Give startup time; channel may fail, but core should keep running.
+	time.Sleep(120 * time.Millisecond)
+	sigCh <- os.Interrupt
+
+	select {
+	case runErr := <-done:
+		if runErr != nil {
+			t.Errorf("Run should not fail when channel start fails: %v", runErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not exit after signal")
 	}
 }
 
@@ -848,6 +860,225 @@ func TestGateway_RealtimeModelSwitch_EmitsStandaloneMessage(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting model switch outbound message")
+	}
+}
+
+func TestGateway_SendStartupNotification_WaitsForChannelReadyEvent(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	trigger := filepath.Join(tmpHome, ".aevitas", "restart_trigger.txt")
+	if err := os.MkdirAll(filepath.Dir(trigger), 0755); err != nil {
+		t.Fatalf("mkdir trigger dir: %v", err)
+	}
+	if err := os.WriteFile(trigger, []byte("telegram:5821086579"), 0644); err != nil {
+		t.Fatalf("write trigger file: %v", err)
+	}
+
+	msgBus := bus.NewMessageBus(10)
+	readyCh := make(chan struct{}, 1)
+	g := &Gateway{
+		bus:    msgBus,
+		logger: newTestLogger(),
+		waitReadyFn: func(ctx context.Context, name string) bool {
+			if name != "telegram" {
+				return false
+			}
+			select {
+			case <-ctx.Done():
+				return false
+			case <-readyCh:
+				return true
+			}
+		},
+		channelStatesFn: func() map[string]channel.ChannelState {
+			return map[string]channel.ChannelState{
+				"telegram": {Running: false},
+			}
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g.sendStartupNotification(ctx)
+
+	select {
+	case <-msgBus.Outbound:
+		t.Fatal("startup notification should wait for ready event")
+	default:
+	}
+
+	readyCh <- struct{}{}
+	select {
+	case out := <-msgBus.Outbound:
+		if out.Channel != "telegram" || out.ChatID != "5821086579" {
+			t.Fatalf("unexpected target: %+v", out)
+		}
+		if !strings.Contains(out.Content, "Gateway Restarted Successfully") {
+			t.Fatalf("unexpected content: %q", out.Content)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting startup notification after ready event")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, err := os.Stat(trigger)
+		if os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("trigger file should be removed after send, err=%v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestGateway_SendStartupNotification_SendsImmediatelyWhenChannelRunning(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	trigger := filepath.Join(tmpHome, ".aevitas", "restart_trigger.txt")
+	if err := os.MkdirAll(filepath.Dir(trigger), 0755); err != nil {
+		t.Fatalf("mkdir trigger dir: %v", err)
+	}
+	if err := os.WriteFile(trigger, []byte("feishu:oc_123"), 0644); err != nil {
+		t.Fatalf("write trigger file: %v", err)
+	}
+
+	msgBus := bus.NewMessageBus(10)
+	g := &Gateway{
+		bus:    msgBus,
+		logger: newTestLogger(),
+		channelStatesFn: func() map[string]channel.ChannelState {
+			return map[string]channel.ChannelState{
+				"feishu": {Running: true},
+			}
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g.sendStartupNotification(ctx)
+
+	select {
+	case out := <-msgBus.Outbound:
+		if out.Channel != "feishu" || out.ChatID != "oc_123" {
+			t.Fatalf("unexpected target: %+v", out)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting immediate startup notification")
+	}
+}
+
+func TestGateway_RestartCommand_SendsPreNoticeBeforeRestart(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	cmd := channel.NewCommandHandler(nil, "", 200000)
+	scriptPath := cmd.RestartScriptPath()
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0755); err != nil {
+		t.Fatalf("mkdir script dir: %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\n"), 0755); err != nil {
+		t.Fatalf("write restart script: %v", err)
+	}
+
+	msgBus := bus.NewMessageBus(10)
+	restartCalled := make(chan struct{}, 1)
+	var sent bus.OutboundMessage
+	g := &Gateway{
+		bus:        msgBus,
+		logger:     newTestLogger(),
+		cmdHandler: cmd,
+		sendNowFn: func(msg bus.OutboundMessage) error {
+			sent = msg
+			return nil
+		},
+		restartFn: func() error {
+			restartCalled <- struct{}{}
+			return nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go g.processLoop(ctx)
+
+	msgBus.Inbound <- bus.InboundMessage{
+		Channel:  "feishu",
+		ChatID:   "oc_123",
+		SenderID: "u1",
+		Content:  "/restart",
+	}
+
+	select {
+	case <-restartCalled:
+	case <-time.After(time.Second):
+		t.Fatal("restart should be executed after pre-notice")
+	}
+
+	want := "🔄 Restarting Gateway\n\nThe gateway will restart in a few seconds. You'll receive a notification when it's back online."
+	if sent.Content != want {
+		t.Fatalf("unexpected pre-restart message: %q", sent.Content)
+	}
+	if sent.Channel != "feishu" || sent.ChatID != "oc_123" {
+		t.Fatalf("unexpected pre-restart target: %+v", sent)
+	}
+	if _, ok := sent.Metadata[telegramEventKey]; ok {
+		t.Fatalf("feishu pre-restart message should use default card flow, got metadata=%v", sent.Metadata)
+	}
+
+	trigger := filepath.Join(tmpHome, ".aevitas", "restart_trigger.txt")
+	data, err := os.ReadFile(trigger)
+	if err != nil {
+		t.Fatalf("read restart trigger: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "feishu:oc_123" {
+		t.Fatalf("unexpected restart trigger content: %q", string(data))
+	}
+}
+
+func TestGateway_RestartCommand_DoesNotRestartWhenPreNoticeFails(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	cmd := channel.NewCommandHandler(nil, "", 200000)
+	scriptPath := cmd.RestartScriptPath()
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0755); err != nil {
+		t.Fatalf("mkdir script dir: %v", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\n"), 0755); err != nil {
+		t.Fatalf("write restart script: %v", err)
+	}
+
+	msgBus := bus.NewMessageBus(10)
+	restartCalled := false
+	g := &Gateway{
+		bus:        msgBus,
+		logger:     newTestLogger(),
+		cmdHandler: cmd,
+		sendNowFn: func(msg bus.OutboundMessage) error {
+			return errors.New("send failed")
+		},
+		restartFn: func() error {
+			restartCalled = true
+			return nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go g.processLoop(ctx)
+
+	msgBus.Inbound <- bus.InboundMessage{
+		Channel:  "telegram",
+		ChatID:   "5821086579",
+		SenderID: "u1",
+		Content:  "/restart",
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if restartCalled {
+		t.Fatal("restart should not execute when pre-notice fails")
 	}
 }
 

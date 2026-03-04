@@ -46,6 +46,7 @@ type CommandResult struct {
 	Response string   // Response message to send back
 	Files    []string // File paths to send (e.g., log files)
 	Event    string   // Optional event hint for channel rendering
+	Restart  bool     // Whether gateway should execute restart flow
 }
 
 // HandleCommand processes special commands and returns whether it was handled.
@@ -82,14 +83,32 @@ func (h *CommandHandler) HandleCommand(msg bus.InboundMessage) CommandResult {
 			Response: h.handleReset(msg.SessionKey()),
 		}
 	case "/restart":
-		// Save chat info for restart notification
+		resp, ok := h.handleRestart()
+		if !ok {
+			return CommandResult{
+				Handled:  true,
+				Response: resp,
+			}
+		}
+		// Save chat info for post-restart notification.
 		restartInfo := fmt.Sprintf("%s:%s", msg.Channel, msg.ChatID)
 		restartTriggerFile := filepath.Join(os.Getenv("HOME"), ".aevitas", "restart_trigger.txt")
-		os.WriteFile(restartTriggerFile, []byte(restartInfo), 0644)
-		
+		if err := os.MkdirAll(filepath.Dir(restartTriggerFile), 0755); err != nil {
+			return CommandResult{
+				Handled:  true,
+				Response: fmt.Sprintf("❌ Failed to prepare restart: %v", err),
+			}
+		}
+		if err := os.WriteFile(restartTriggerFile, []byte(restartInfo), 0644); err != nil {
+			return CommandResult{
+				Handled:  true,
+				Response: fmt.Sprintf("❌ Failed to prepare restart: %v", err),
+			}
+		}
 		return CommandResult{
 			Handled: true,
-			Response: h.handleRestart(),
+			Response: resp,
+			Restart: true,
 		}
 	case "/logs":
 		// Parse argument: number or "all"
@@ -245,21 +264,19 @@ func (h *CommandHandler) handleUsage(sessionKey, mode string) string {
 	return usagehud.Format(title, stats, inputTokens, h.contextWindowTokens)
 }
 
-func (h *CommandHandler) handleRestart() string {
-	scriptPath := filepath.Join(os.Getenv("HOME"), ".aevitas", "bin", "..", "..", "Documents", "chatbot", "aevitas", "scripts", "restart.sh")
+func (h *CommandHandler) RestartScriptPath() string {
+	return filepath.Join(os.Getenv("HOME"), ".aevitas", "bin", "..", "..", "Documents", "chatbot", "aevitas", "scripts", "restart.sh")
+}
+
+func (h *CommandHandler) handleRestart() (string, bool) {
+	scriptPath := h.RestartScriptPath()
 	
 	// Check if restart script exists
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-		return "⚠️ Restart script not found. This command only works in production mode.\n\nUse `make prod` to install and `scripts/start.sh` to run in background."
+		return "⚠️ Restart script not found. This command only works in production mode.\n\nUse `make prod` to install and `scripts/start.sh` to run in background.", false
 	}
-	
-	// Execute restart script in background
-	cmd := exec.Command("/bin/bash", scriptPath)
-	if err := cmd.Start(); err != nil {
-		return fmt.Sprintf("❌ Failed to restart: %v", err)
-	}
-	
-	return "🔄 **Restarting Gateway**\n\nThe gateway will restart in a few seconds. You'll receive a notification when it's back online."
+
+	return "🔄 Restarting Gateway\n\nThe gateway will restart in a few seconds. You'll receive a notification when it's back online.", true
 }
 
 func (h *CommandHandler) handleLogs(arg string) CommandResult {

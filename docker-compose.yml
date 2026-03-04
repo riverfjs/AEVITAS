@@ -4,7 +4,6 @@ services:
     restart: unless-stopped
     ports:
       - "18790:18790"
-      - "9876:9876"
       - "9886:9886"
     volumes:
       - aevitas-data:/root/.aevitas
@@ -16,15 +15,6 @@ services:
       - AEVITAS_WECOM_TOKEN=${AEVITAS_WECOM_TOKEN:-}
       - AEVITAS_WECOM_ENCODING_AES_KEY=${AEVITAS_WECOM_ENCODING_AES_KEY:-}
       - AEVITAS_WECOM_RECEIVE_ID=${AEVITAS_WECOM_RECEIVE_ID:-}
-
-  # Optional: expose webhook via cloudflared tunnel
-  tunnel:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    profiles: ["tunnel"]
-    command: tunnel --url http://aevitas:9876
-    depends_on:
-      - aevitas
 
 volumes:
   aevitas-data:

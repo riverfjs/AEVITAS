@@ -1,9 +1,8 @@
-.PHONY: build run gateway tunnel test setup clean docker-up docker-down lint prod start stop restart
+.PHONY: build run gateway test setup clean docker-up docker-down lint prod start stop restart install-ffmpeg
 
 BINARY    := aevitas
 BUILD_DIR := .
 CONFIG    := $(HOME)/.aevitas/config.json
-FEISHU_PORT ?= 9876
 INSTALL_DIR := $(HOME)/.aevitas/bin
 SCRIPT_DIR := scripts
 
@@ -82,15 +81,8 @@ skills-uninstall: build
 skills-verify: build
 	./$(BINARY) skills verify
 
-## Start cloudflared tunnel for Feishu webhook
-tunnel:
-	@command -v cloudflared >/dev/null 2>&1 || { echo "Install cloudflared: brew install cloudflared"; exit 1; }
-	@echo "Starting cloudflared tunnel -> http://localhost:$(FEISHU_PORT)"
-	@echo "Copy the https://*.trycloudflare.com URL to Feishu event subscription"
-	cloudflared tunnel --url http://localhost:$(FEISHU_PORT)
-
 ## Build and install to production directory
-prod:
+prod: install-ffmpeg
 	@echo "Tidying dependencies..."
 	@go mod tidy
 	@$(MAKE) build
@@ -98,7 +90,50 @@ prod:
 	@mkdir -p $(INSTALL_DIR)
 	@cp $(BINARY) $(INSTALL_DIR)/$(BINARY)
 	@echo "✓ aevitas installed to $(INSTALL_DIR)/$(BINARY)"
+	@echo "✓ ffmpeg tools installed to $(INSTALL_DIR)/ffmpeg and $(INSTALL_DIR)/ffprobe"
 	@echo "Use 'make start' or 'scripts/start.sh' to start in background"
+
+## Download local ffmpeg/ffprobe binaries for production
+install-ffmpeg:
+	@echo "Installing local ffmpeg/ffprobe into $(INSTALL_DIR)..."
+	@mkdir -p $(INSTALL_DIR)
+	@ARCH="$$(uname -m)"; \
+	OS="$$(uname -s)"; \
+	if [ "$$OS" != "Darwin" ]; then \
+		echo "⚠️ Auto ffmpeg download currently supports macOS only (detected $$OS)."; \
+		echo "Please place ffmpeg and ffprobe in $(INSTALL_DIR) manually."; \
+		exit 1; \
+	fi; \
+	case "$$ARCH" in \
+		arm64) \
+			FFMPEG_URL="https://ffmpeg.martin-riedl.de/download/macos/arm64/1712343170_7.0/ffmpeg.zip"; \
+			FFPROBE_URL="https://ffmpeg.martin-riedl.de/download/macos/arm64/1712343170_7.0/ffprobe.zip"; \
+			;; \
+		x86_64) \
+			FFMPEG_URL="https://evermeet.cx/ffmpeg/getrelease/zip"; \
+			FFPROBE_URL="https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip"; \
+			;; \
+		*) \
+			echo "❌ Unsupported macOS architecture: $$ARCH"; \
+			exit 1; \
+			;; \
+	esac; \
+	TMP_DIR="$$(mktemp -d)"; \
+	trap 'rm -rf "$$TMP_DIR"' EXIT; \
+	echo "Downloading ffmpeg from $$FFMPEG_URL"; \
+	curl -fL "$$FFMPEG_URL" -o "$$TMP_DIR/ffmpeg.zip"; \
+	echo "Downloading ffprobe from $$FFPROBE_URL"; \
+	curl -fL "$$FFPROBE_URL" -o "$$TMP_DIR/ffprobe.zip"; \
+	unzip -qo "$$TMP_DIR/ffmpeg.zip" -d "$$TMP_DIR/ffmpeg"; \
+	unzip -qo "$$TMP_DIR/ffprobe.zip" -d "$$TMP_DIR/ffprobe"; \
+	if [ ! -f "$$TMP_DIR/ffmpeg/ffmpeg" ] || [ ! -f "$$TMP_DIR/ffprobe/ffprobe" ]; then \
+		echo "❌ Downloaded archive missing ffmpeg/ffprobe binaries"; \
+		exit 1; \
+	fi; \
+	cp "$$TMP_DIR/ffmpeg/ffmpeg" "$(INSTALL_DIR)/ffmpeg"; \
+	cp "$$TMP_DIR/ffprobe/ffprobe" "$(INSTALL_DIR)/ffprobe"; \
+	chmod +x "$(INSTALL_DIR)/ffmpeg" "$(INSTALL_DIR)/ffprobe"; \
+	echo "✓ ffmpeg + ffprobe installed to $(INSTALL_DIR)"
 
 ## Start gateway in background (production mode)
 start:
@@ -133,10 +168,6 @@ test-cover:
 docker-up:
 	docker compose up -d --build
 
-## Docker: start with cloudflared tunnel
-docker-up-tunnel:
-	docker compose --profile tunnel up -d --build
-
 ## Docker: stop
 docker-down:
 	docker compose down
@@ -161,7 +192,7 @@ help:
 	@echo "  onboard          Initialize config and workspace"
 	@echo "  status           Show aevitas status"
 	@echo "  setup            Interactive config setup"
-	@echo "  prod             Build and install to ~/.aevitas/bin/"
+	@echo "  prod             Build + install + download ffmpeg/ffprobe"
 	@echo ""
 	@echo "Production Control:"
 	@echo "  start            Start gateway in background"
@@ -181,9 +212,7 @@ help:
 	@echo "  test-cover       Run tests with coverage report"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  tunnel           Start cloudflared tunnel for Feishu"
 	@echo "  docker-up        Docker build and start"
-	@echo "  docker-up-tunnel Docker start with cloudflared tunnel"
 	@echo "  docker-down      Docker stop"
 	@echo ""
 	@echo "Production Scripts (or use make commands above):"
