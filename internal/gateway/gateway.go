@@ -1089,13 +1089,15 @@ func buildAttachments(msg bus.InboundMessage) []api.Attachment {
 		if strings.TrimSpace(mediaPath) == "" {
 			continue
 		}
-		attType := strings.TrimSpace(typeMap[mediaPath])
+		attType := strings.ToLower(strings.TrimSpace(typeMap[mediaPath]))
+		switch attType {
+		case "image", "audio", "file":
+		default:
+			continue
+		}
 		mime := strings.TrimSpace(mimeMap[mediaPath])
 		if mime == "" {
 			mime = api.DetectAttachmentMIME(attType, mediaPath)
-		}
-		if attType == "" {
-			attType = api.DetectAttachmentType("", mime, mediaPath)
 		}
 		attachments = append(attachments, api.Attachment{
 			Type:     attType,

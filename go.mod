@@ -7,7 +7,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 	github.com/lestrrat-go/file-rotatelogs v2.4.0+incompatible
-	github.com/riverfjs/agentsdk-go v0.1.9
+	github.com/riverfjs/agentsdk-go v0.1.10
 	github.com/riverfjs/telegramify-go v0.1.7
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2

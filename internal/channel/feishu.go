@@ -945,9 +945,11 @@ func (f *FeishuChannel) sendMediaPath(chatID, mediaPath, explicitType, explicitM
 	if mime == "" {
 		mime = api.DetectAttachmentMIME(explicitType, mediaPath)
 	}
-	kind := strings.TrimSpace(explicitType)
-	if kind == "" {
-		kind = api.DetectAttachmentType("", mime, mediaPath)
+	kind := strings.ToLower(strings.TrimSpace(explicitType))
+	switch kind {
+	case "image", "audio", "file":
+	default:
+		return fmt.Errorf("unsupported media type %q", explicitType)
 	}
 	name := filepath.Base(mediaPath)
 	switch kind {
@@ -1031,6 +1033,7 @@ func (f *FeishuChannel) downloadInboundMedia(messageID, messageType, contentRaw 
 			fileKey = strings.TrimSpace(v)
 		}
 		resourceType = "file"
+		explicitKind = "file"
 	}
 	if fileKey == "" {
 		return "", "", "", fmt.Errorf("empty media key")
@@ -1052,8 +1055,7 @@ func (f *FeishuChannel) downloadInboundMedia(messageID, messageType, contentRaw 
 	if mime == "" {
 		mime = api.DetectAttachmentMIME(explicitKind, localPath)
 	}
-	kind := api.DetectAttachmentType(explicitKind, mime, localPath)
-	return localPath, kind, mime, nil
+	return localPath, explicitKind, mime, nil
 }
 
 func mapStringMeta(meta map[string]any, key string) map[string]string {
