@@ -154,6 +154,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 [ ! -f "${WORKSPACE_DIR}/AGENTS.md" ] && cp "${PROJECT_ROOT}/workspace/AGENTS.md" "${WORKSPACE_DIR}/" 2>/dev/null || true
+[ ! -f "${WORKSPACE_DIR}/RULE.md" ] && cp "${PROJECT_ROOT}/workspace/RULE.md" "${WORKSPACE_DIR}/" 2>/dev/null || true
 [ ! -f "${WORKSPACE_DIR}/SOUL.md" ] && cp "${PROJECT_ROOT}/workspace/SOUL.md" "${WORKSPACE_DIR}/" 2>/dev/null || true
 [ ! -f "${WORKSPACE_DIR}/.claude/settings.json" ] && cp "${PROJECT_ROOT}/workspace/.claude/settings.json" "${WORKSPACE_DIR}/.claude/" 2>/dev/null || true
 [ ! -f "${WORKSPACE_DIR}/memory/MEMORY.md" ] && touch "${WORKSPACE_DIR}/memory/MEMORY.md"

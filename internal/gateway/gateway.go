@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -107,6 +108,7 @@ type Gateway struct {
 	// Current execution context (for realtime callbacks)
 	currentChannelID string
 	currentChatID    string
+	currentReplyTo   string
 	usageMu          sync.Mutex
 	usageNotified    map[string]uint8
 }
@@ -166,6 +168,13 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 				}
 			}
 
+		case api.RealtimeEventModelSwitch:
+			msg = strings.TrimSpace(event.Message)
+			if msg == "" {
+				msg = "Model switched to fallback."
+			}
+			msg = "⚠️ " + msg
+
 		default:
 			return
 		}
@@ -174,6 +183,7 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 			return
 		}
 		meta := map[string]any{}
+		replyTo := g.currentReplyTo
 		if event.Type == api.RealtimeEventProgressUpdate {
 			meta[telegramEventKey] = telegramEventToolProgress
 			meta["tool_name"] = event.LastTool
@@ -181,10 +191,17 @@ func NewWithOptions(cfg *config.Config, opts Options) (*Gateway, error) {
 				meta["tool_params"] = event.RecentCalls[0].Params
 			}
 			meta["tool_time"] = time.Now().Format(time.RFC3339)
+			// Tool progress should stay as independent tool blocks.
+			replyTo = ""
+		}
+		if event.Type == api.RealtimeEventModelSwitch {
+			// Model switch notice should be a standalone alert.
+			replyTo = ""
 		}
 		g.bus.Outbound <- bus.OutboundMessage{
 			Channel:  g.currentChannelID,
 			ChatID:   g.currentChatID,
+			ReplyTo:  replyTo,
 			Content:  msg,
 			Metadata: meta,
 		}
@@ -307,6 +324,11 @@ func (g *Gateway) buildSystemPrompt() string {
 		sb.WriteString("\n\n")
 	}
 
+	if data, err := os.ReadFile(filepath.Join(g.cfg.Agent.Workspace, "RULE.md")); err == nil {
+		sb.Write(data)
+		sb.WriteString("\n\n")
+	}
+
 	if data, err := os.ReadFile(filepath.Join(g.cfg.Agent.Workspace, "SOUL.md")); err == nil {
 		sb.Write(data)
 		sb.WriteString("\n\n")
@@ -422,9 +444,11 @@ func (g *Gateway) processAgent(ctx context.Context, msg bus.InboundMessage) {
 	// Set current execution context for realtime callbacks
 	g.currentChannelID = msg.Channel
 	g.currentChatID = msg.ChatID
+	g.currentReplyTo = inboundReplyTo(msg)
 	defer func() {
 		g.currentChannelID = ""
 		g.currentChatID = ""
+		g.currentReplyTo = ""
 	}()
 
 	// Stop typing indicator when processing completes (deferred)
@@ -504,6 +528,7 @@ func (g *Gateway) processAgentStream(ctx context.Context, msg bus.InboundMessage
 		g.bus.Outbound <- bus.OutboundMessage{
 			Channel:  msg.Channel,
 			ChatID:   msg.ChatID,
+			ReplyTo:  inboundReplyTo(msg),
 			Content:  content,
 			Metadata: meta,
 		}
@@ -575,6 +600,7 @@ func (g *Gateway) emitAgentError(msg bus.InboundMessage, err error) {
 	g.bus.Outbound <- bus.OutboundMessage{
 		Channel: msg.Channel,
 		ChatID:  msg.ChatID,
+		ReplyTo: inboundReplyTo(msg),
 		Content: errorMsg,
 	}
 }
@@ -619,6 +645,7 @@ func (g *Gateway) deliverAgentResponse(msg bus.InboundMessage, resp *api.Respons
 		g.bus.Outbound <- bus.OutboundMessage{
 			Channel:  msg.Channel,
 			ChatID:   msg.ChatID,
+			ReplyTo:  inboundReplyTo(msg),
 			Content:  hookResult.askQuestion,
 			Metadata: meta,
 		}
@@ -645,6 +672,7 @@ func (g *Gateway) deliverAgentResponse(msg bus.InboundMessage, resp *api.Respons
 		g.bus.Outbound <- bus.OutboundMessage{
 			Channel:  msg.Channel,
 			ChatID:   msg.ChatID,
+			ReplyTo:  inboundReplyTo(msg),
 			Content:  result,
 			Metadata: meta,
 		}
@@ -656,6 +684,7 @@ func (g *Gateway) deliverAgentResponse(msg bus.InboundMessage, resp *api.Respons
 		g.bus.Outbound <- bus.OutboundMessage{
 			Channel: msg.Channel,
 			ChatID:  msg.ChatID,
+			ReplyTo: inboundReplyTo(msg),
 			Content: hookResult.memoryNotice,
 		}
 	}
@@ -910,6 +939,36 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+func inboundReplyTo(msg bus.InboundMessage) string {
+	if msg.Metadata == nil {
+		return ""
+	}
+	v, ok := msg.Metadata["message_id"]
+	if !ok || v == nil {
+		return ""
+	}
+	switch id := v.(type) {
+	case int:
+		if id > 0 {
+			return strconv.Itoa(id)
+		}
+	case int64:
+		if id > 0 {
+			return strconv.FormatInt(id, 10)
+		}
+	case float64:
+		if id > 0 {
+			return strconv.Itoa(int(id))
+		}
+	case string:
+		id = strings.TrimSpace(id)
+		if id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 func formatProgressParams(raw string) string {

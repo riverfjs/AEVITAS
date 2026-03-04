@@ -2,6 +2,9 @@ package channel
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -82,6 +85,9 @@ func TestCommandHandler_HandleHelp(t *testing.T) {
 	
 	if !contains(result.Response, "/start") || !contains(result.Response, "/reset") {
 		t.Errorf("Expected command list in response, got: %s", result.Response)
+	}
+	if !contains(result.Response, "/cleanup - Clean project temp files + .claude/voice/tts cache") {
+		t.Errorf("Expected updated cleanup help text, got: %s", result.Response)
 	}
 }
 
@@ -354,6 +360,66 @@ func TestCommandHandler_HandleUsage_NoReporter(t *testing.T) {
 	}
 	if !strings.Contains(result.Response, "not available") {
 		t.Fatalf("unexpected response: %s", result.Response)
+	}
+}
+
+func TestCommandHandler_CleanupScanIncludesTempAndTTS(t *testing.T) {
+	workspace := t.TempDir()
+	handler := NewCommandHandler(nil, workspace, 200000)
+
+	chatID := fmt.Sprintf("cleanup-test-%d", os.Getpid())
+	tempScreenshot := filepath.Join(os.TempDir(), fmt.Sprintf("screenshot-%s.png", chatID))
+	nestedTempFile := filepath.Join(os.TempDir(), fmt.Sprintf("aevitas-%s", chatID), "agentsdk-nested.tmp")
+	ttsFile := filepath.Join(workspace, ".claude", "voice", "tts", "sample.mp3")
+
+	if err := os.WriteFile(tempScreenshot, []byte("x"), 0644); err != nil {
+		t.Fatalf("failed to create temp screenshot: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(tempScreenshot) })
+
+	if err := os.MkdirAll(filepath.Dir(nestedTempFile), 0755); err != nil {
+		t.Fatalf("failed to create nested temp dir: %v", err)
+	}
+	if err := os.WriteFile(nestedTempFile, []byte("nested"), 0644); err != nil {
+		t.Fatalf("failed to create nested temp file: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(nestedTempFile)
+		_ = os.Remove(filepath.Dir(nestedTempFile))
+	})
+
+	if err := os.MkdirAll(filepath.Dir(ttsFile), 0755); err != nil {
+		t.Fatalf("failed to create tts dir: %v", err)
+	}
+	if err := os.WriteFile(ttsFile, []byte("audio"), 0644); err != nil {
+		t.Fatalf("failed to create tts cache file: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(ttsFile) })
+
+	result := handler.handleCleanupScan(chatID)
+	if !result.Handled {
+		t.Fatal("expected cleanup scan to be handled")
+	}
+	if !contains(result.Response, "Temporary Files Found") {
+		t.Fatalf("unexpected cleanup scan response: %s", result.Response)
+	}
+
+	cleanupFile := filepath.Join(os.TempDir(), fmt.Sprintf("cleanup_%s.txt", chatID))
+	t.Cleanup(func() { _ = os.Remove(cleanupFile) })
+
+	data, err := os.ReadFile(cleanupFile)
+	if err != nil {
+		t.Fatalf("failed to read cleanup list: %v", err)
+	}
+	list := string(data)
+	if !contains(list, tempScreenshot) {
+		t.Fatalf("cleanup list missing temp screenshot: %s", list)
+	}
+	if !contains(list, nestedTempFile) {
+		t.Fatalf("cleanup list missing nested temp file: %s", list)
+	}
+	if !contains(list, ttsFile) {
+		t.Fatalf("cleanup list missing tts file: %s", list)
 	}
 }
 

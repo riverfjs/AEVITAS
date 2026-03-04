@@ -379,6 +379,29 @@ func TestTelegramChannel_Send_Success(t *testing.T) {
 	}
 }
 
+func TestTelegramChannel_Send_ReplyToUserMessage(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	err := ch.Send(bus.OutboundMessage{ChatID: "123", ReplyTo: "42", Content: "hello"})
+	if err != nil {
+		t.Fatalf("Send error: %v", err)
+	}
+	if len(mockBot.sentMsgs) < 1 {
+		t.Fatalf("expected at least 1 sent message, got %d", len(mockBot.sentMsgs))
+	}
+	msg, ok := mockBot.sentMsgs[0].(tgbotapi.MessageConfig)
+	if !ok {
+		t.Fatalf("expected first outbound to be MessageConfig, got %T", mockBot.sentMsgs[0])
+	}
+	if msg.ReplyToMessageID != 42 {
+		t.Fatalf("expected ReplyToMessageID=42, got %d", msg.ReplyToMessageID)
+	}
+}
+
 func TestTelegramChannel_Send_LongMessage(t *testing.T) {
 	b := bus.NewMessageBus(10)
 	mockBot := newMockBot()
@@ -498,6 +521,41 @@ func TestTelegramChannel_Send_PreviewUpdateThenFinal(t *testing.T) {
 	}
 	if len(mockBot.deleted) == 0 {
 		t.Fatalf("expected empty tool placeholder to be deleted on final")
+	}
+}
+
+func TestTelegramChannel_Send_PreviewUpdate_RepliesToUserMessage(t *testing.T) {
+	b := bus.NewMessageBus(10)
+	mockBot := newMockBot()
+
+	ch, _ := NewTelegramChannel(config.TelegramConfig{Token: "fake-token"}, b, sdklogger.NewDefault())
+	ch.SetBot(mockBot)
+
+	err := ch.Send(bus.OutboundMessage{
+		ChatID:   "123",
+		ReplyTo:  "99",
+		Content:  "partial",
+		Metadata: map[string]any{telegramEventKey: telegramEventPreviewUpdate},
+	})
+	if err != nil {
+		t.Fatalf("preview update error: %v", err)
+	}
+	if len(mockBot.sentMsgs) != 2 {
+		t.Fatalf("expected first preview to create tool+draft blocks, got %d", len(mockBot.sentMsgs))
+	}
+	toolMsg, ok := mockBot.sentMsgs[0].(tgbotapi.MessageConfig)
+	if !ok {
+		t.Fatalf("expected tool block to be MessageConfig, got %T", mockBot.sentMsgs[0])
+	}
+	draftMsg, ok := mockBot.sentMsgs[1].(tgbotapi.MessageConfig)
+	if !ok {
+		t.Fatalf("expected draft block to be MessageConfig, got %T", mockBot.sentMsgs[1])
+	}
+	if toolMsg.ReplyToMessageID != 0 {
+		t.Fatalf("expected tool block not to reply, got %d", toolMsg.ReplyToMessageID)
+	}
+	if draftMsg.ReplyToMessageID != 99 {
+		t.Fatalf("expected draft block ReplyToMessageID=99, got %d", draftMsg.ReplyToMessageID)
 	}
 }
 

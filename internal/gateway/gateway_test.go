@@ -801,6 +801,56 @@ func TestGateway_Run_ChannelStartError(t *testing.T) {
 	}
 }
 
+func TestGateway_RealtimeModelSwitch_EmitsStandaloneMessage(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Agent: config.AgentConfig{
+			Workspace: tmpDir,
+		},
+		Channels: config.ChannelsConfig{},
+	}
+
+	mockRt := &mockRuntime{}
+	var captured func(api.RealtimeEvent)
+	factory := func(cfg *config.Config, sysPrompt string, realtimeCallback func(api.RealtimeEvent)) (Runtime, error) {
+		captured = realtimeCallback
+		return mockRt, nil
+	}
+
+	g, err := NewWithOptions(cfg, Options{RuntimeFactory: factory})
+	if err != nil {
+		t.Fatalf("NewWithOptions error: %v", err)
+	}
+	defer g.Shutdown()
+	if captured == nil {
+		t.Fatal("realtime callback should be captured")
+	}
+
+	g.currentChannelID = "telegram"
+	g.currentChatID = "5821086579"
+	g.currentReplyTo = "123"
+
+	captured(api.RealtimeEvent{
+		Type:    api.RealtimeEventModelSwitch,
+		Message: "Model fallback switch: anthropic/claude-opus-4.6 -> deepseek/deepseek-v3.2",
+	})
+
+	select {
+	case out := <-g.bus.Outbound:
+		if out.Channel != "telegram" || out.ChatID != "5821086579" {
+			t.Fatalf("unexpected outbound target: %+v", out)
+		}
+		if out.ReplyTo != "" {
+			t.Fatalf("model switch notice should be standalone, got reply_to=%q", out.ReplyTo)
+		}
+		if !strings.Contains(out.Content, "fallback switch") {
+			t.Fatalf("unexpected outbound content: %q", out.Content)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting model switch outbound message")
+	}
+}
+
 func TestDefaultRuntimeFactory_NoAPIKey(t *testing.T) {
 	cfg := &config.Config{
 		Provider: config.ProviderConfig{

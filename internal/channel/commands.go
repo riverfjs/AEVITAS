@@ -177,7 +177,7 @@ Use /skill list to see installed skills
 • /status - Show gateway status
 • /usage [total] - Show token usage (session or total)
 • /chatid - Show your chat ID
-• /cleanup - Clean temporary screenshot files (requires confirmation)
+• /cleanup - Clean project temp files + .claude/voice/tts cache (requires confirmation)
 
 **Multimodal:**
 Send images with text - I can analyze photos, diagrams, screenshots, etc.
@@ -428,38 +428,92 @@ func (h *CommandHandler) handleStatus() string {
 
 // handleCleanupScan scans for temporary screenshot files and shows statistics
 func (h *CommandHandler) handleCleanupScan(chatID string) CommandResult {
-	// Scan for screenshot files in common temp directories
+	// Scan project temp files in common temp directories + workspace TTS cache.
 	var tempFiles []string
 	var totalSize int64
-	
-	// Check /tmp and OS temp dir
-	tempDirs := []string{
-		os.TempDir(),
-		"/tmp",
-	}
-	
+
+	seen := map[string]struct{}{}
+	tempRoot := filepath.Clean(os.TempDir())
+
+	// Check OS temp dir and common temp dirs.
+	tempDirs := []string{tempRoot, "/tmp", "/var/tmp", "/private/var/tmp"}
 	for _, dir := range tempDirs {
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			continue
 		}
-		
-		// Find screenshot-*.png files
-		pattern := filepath.Join(dir, "screenshot-*.png")
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			continue
+
+		// Keep the pattern narrow to avoid accidental deletion of unrelated temp files.
+		patterns := []string{
+			filepath.Join(dir, "screenshot-*.png"),
+			filepath.Join(dir, "aevitas-*"),
+			filepath.Join(dir, "agentsdk-*"),
 		}
-		
-		for _, file := range matches {
-			info, err := os.Stat(file)
+		for _, pattern := range patterns {
+			matches, err := filepath.Glob(pattern)
 			if err != nil {
 				continue
 			}
-			tempFiles = append(tempFiles, file)
-			totalSize += info.Size()
+
+			for _, file := range matches {
+				if _, ok := seen[file]; ok {
+					continue
+				}
+				info, err := os.Stat(file)
+				if err != nil || info.IsDir() {
+					continue
+				}
+				seen[file] = struct{}{}
+				tempFiles = append(tempFiles, file)
+				totalSize += info.Size()
+			}
 		}
 	}
-	
+
+	// Also scan nested files under TMPDIR, because macOS often stores temp payloads
+	// under subdirectories in /var/folders/.../T.
+	_ = filepath.Walk(tempRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		name := strings.ToLower(info.Name())
+		if !(strings.HasPrefix(name, "screenshot-") || strings.HasPrefix(name, "aevitas-") || strings.HasPrefix(name, "agentsdk-")) {
+			return nil
+		}
+		if _, ok := seen[path]; ok {
+			return nil
+		}
+		seen[path] = struct{}{}
+		tempFiles = append(tempFiles, path)
+		totalSize += info.Size()
+		return nil
+	})
+
+	// Include workspace TTS cache files.
+	ttsDir := ""
+	if h.workspace != "" {
+		ttsDir = filepath.Join(h.workspace, ".claude", "voice", "tts")
+	} else {
+		ttsDir = filepath.Join(os.Getenv("HOME"), ".aevitas", "workspace", ".claude", "voice", "tts")
+	}
+
+	if info, err := os.Stat(ttsDir); err == nil && info.IsDir() {
+		_ = filepath.Walk(ttsDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info == nil || info.IsDir() {
+				return nil
+			}
+			if _, ok := seen[path]; ok {
+				return nil
+			}
+			seen[path] = struct{}{}
+			tempFiles = append(tempFiles, path)
+			totalSize += info.Size()
+			return nil
+		})
+	}
+
 	if len(tempFiles) == 0 {
 		return CommandResult{
 			Handled:  true,
@@ -493,7 +547,7 @@ func (h *CommandHandler) handleCleanupScan(chatID string) CommandResult {
 	// Format response
 	response := "🗑️ **Temporary Files Found**\n\n"
 	response += "📊 Statistics:\n"
-	response += fmt.Sprintf("• Files: %d screenshot(s)\n", len(tempFiles))
+	response += fmt.Sprintf("• Files: %d file(s)\n", len(tempFiles))
 	response += fmt.Sprintf("• Total Size: %.2f MB\n", float64(totalSize)/(1024*1024))
 	response += fmt.Sprintf("• Oldest: %s\n", utils.FormatRelativeTime(oldestTime))
 	response += fmt.Sprintf("• Newest: %s\n\n", utils.FormatRelativeTime(newestTime))
